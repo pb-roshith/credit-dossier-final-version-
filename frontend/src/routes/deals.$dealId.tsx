@@ -3,7 +3,8 @@ import { useEffect, useState, useCallback } from "react";
 import {
   ArrowLeft, FileText, Clock, Download, Sparkles, RefreshCw, Plus, TriangleAlert,
   Loader2, CheckCircle2, Upload, X, FileDown, BookOpenCheck, Trash2, FileType, Save,
-  File as FileIcon, Link as LinkIcon, Type, Eye, EyeOff, BarChart3, Table as TableIcon
+  File as FileIcon, Link as LinkIcon, Type, Eye, EyeOff, BarChart3, Table as TableIcon,
+  ShieldCheck, AlertTriangle, ChevronDown, ChevronUp, Info
 } from "lucide-react";
 import { api, formatAmount, type Deal, type Section } from "@/lib/deals";
 import ReactMarkdown from "react-markdown";
@@ -1028,6 +1029,8 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                   </span>
                 </div>
               </div>
+              {/* Accuracy Panel */}
+              <AccuracyPanel section={active} />
               {/* Rendered markdown content */}
               <div className="narrative-prose px-6 py-5">
                 <MarkdownRenderer content={active.generated_content} primaryColor={deal.primary_color} secondaryColor={deal.secondary_color} />
@@ -1056,6 +1059,206 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ── Accuracy Panel Component ──────────────────────────────────── */
+
+function AccuracyPanel({ section }: { section: Section }) {
+  const [expanded, setExpanded] = useState(false);
+
+  // No accuracy assessment available
+  if (section.accuracy_score === null && !section.accuracy_details) {
+    return (
+      <div className="flex items-center gap-2 px-5 py-2 bg-slate-50 border-b border-slate-100">
+        <Info className="h-3.5 w-3.5 text-slate-400" />
+        <span className="text-[10px] text-slate-500 italic">
+          Accuracy not assessed — no grounding documents attached
+        </span>
+      </div>
+    );
+  }
+
+  const score = section.accuracy_score ?? 0;
+  const details = section.accuracy_details;
+
+  // Color theming based on score
+  const getScoreColor = (s: number) => {
+    if (s >= 80) return { bg: "bg-emerald-50", border: "border-emerald-200", text: "text-emerald-700", ring: "stroke-emerald-500", fill: "bg-emerald-500", label: "High Confidence" };
+    if (s >= 60) return { bg: "bg-amber-50", border: "border-amber-200", text: "text-amber-700", ring: "stroke-amber-500", fill: "bg-amber-500", label: "Moderate Confidence" };
+    return { bg: "bg-red-50", border: "border-red-200", text: "text-red-700", ring: "stroke-red-500", fill: "bg-red-500", label: "Low Confidence" };
+  };
+
+  const colors = getScoreColor(score);
+
+  // SVG circular gauge
+  const radius = 28;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (score / 100) * circumference;
+
+  // Claims total for percentage bar
+  const grounded = details?.grounded_claims ?? 0;
+  const inferred = details?.inferred_claims ?? 0;
+  const unsupported = details?.unsupported_claims ?? 0;
+  const totalClaims = grounded + inferred + unsupported;
+
+  return (
+    <div className={`border-b ${colors.border} ${colors.bg} transition-all duration-300`}>
+      {/* Collapsed summary bar */}
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-3 px-5 py-2.5 hover:brightness-95 transition-all"
+      >
+        {/* Circular gauge */}
+        <div className="relative shrink-0" style={{ width: 40, height: 40 }}>
+          <svg width="40" height="40" viewBox="0 0 64 64" className="-rotate-90">
+            {/* Background circle */}
+            <circle
+              cx="32" cy="32" r={radius}
+              fill="none"
+              stroke="currentColor"
+              className="text-black/5"
+              strokeWidth="5"
+            />
+            {/* Score arc */}
+            <circle
+              cx="32" cy="32" r={radius}
+              fill="none"
+              className={colors.ring}
+              strokeWidth="5"
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={strokeDashoffset}
+              style={{ transition: "stroke-dashoffset 0.8s ease-out" }}
+            />
+          </svg>
+          <div className="absolute inset-0 flex items-center justify-center">
+            <span className={`text-[11px] font-bold ${colors.text}`}>{score}%</span>
+          </div>
+        </div>
+
+        {/* Label */}
+        <div className="flex-1 min-w-0 text-left">
+          <div className="flex items-center gap-1.5">
+            <ShieldCheck className={`h-3.5 w-3.5 ${colors.text}`} />
+            <span className={`text-xs font-semibold ${colors.text}`}>
+              {colors.label}
+            </span>
+          </div>
+          {details?.summary && (
+            <p className="text-[10px] text-muted-foreground mt-0.5 truncate">
+              {details.summary}
+            </p>
+          )}
+        </div>
+
+        {/* Claims mini-bar */}
+        {totalClaims > 0 && (
+          <div className="hidden sm:flex items-center gap-3 shrink-0">
+            <div className="flex items-center gap-1">
+              <div className="w-16 h-1.5 rounded-full bg-black/5 overflow-hidden flex">
+                <div className="h-full bg-emerald-500 transition-all" style={{ width: `${(grounded / totalClaims) * 100}%` }} />
+                <div className="h-full bg-amber-400 transition-all" style={{ width: `${(inferred / totalClaims) * 100}%` }} />
+                <div className="h-full bg-red-400 transition-all" style={{ width: `${(unsupported / totalClaims) * 100}%` }} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Expand/collapse */}
+        <div className={`shrink-0 ${colors.text}`}>
+          {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </div>
+      </button>
+
+      {/* Expanded details */}
+      {expanded && details && (
+        <div className="px-5 pb-4 pt-1 space-y-3 animate-in slide-in-from-top-1 duration-200">
+          {/* Claims breakdown */}
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-lg bg-white/70 border border-emerald-200/60 p-2.5 text-center">
+              <div className="text-lg font-bold text-emerald-700">{grounded}</div>
+              <div className="text-[9px] font-semibold uppercase tracking-wider text-emerald-600 mt-0.5">
+                Grounded
+              </div>
+              <div className="text-[9px] text-emerald-500 mt-0.5">Direct from docs</div>
+            </div>
+            <div className="rounded-lg bg-white/70 border border-amber-200/60 p-2.5 text-center">
+              <div className="text-lg font-bold text-amber-700">{inferred}</div>
+              <div className="text-[9px] font-semibold uppercase tracking-wider text-amber-600 mt-0.5">
+                Inferred
+              </div>
+              <div className="text-[9px] text-amber-500 mt-0.5">Reasoned from data</div>
+            </div>
+            <div className="rounded-lg bg-white/70 border border-red-200/60 p-2.5 text-center">
+              <div className="text-lg font-bold text-red-700">{unsupported}</div>
+              <div className="text-[9px] font-semibold uppercase tracking-wider text-red-600 mt-0.5">
+                Unsupported
+              </div>
+              <div className="text-[9px] text-red-500 mt-0.5">No doc evidence</div>
+            </div>
+          </div>
+
+          {/* Full-width claims bar */}
+          {totalClaims > 0 && (
+            <div>
+              <div className="flex justify-between text-[9px] text-muted-foreground mb-1">
+                <span>Claims Distribution</span>
+                <span>{totalClaims} total claims</span>
+              </div>
+              <div className="h-2.5 rounded-full bg-black/5 overflow-hidden flex">
+                <div
+                  className="h-full bg-emerald-500 transition-all duration-500"
+                  style={{ width: `${(grounded / totalClaims) * 100}%` }}
+                  title={`${grounded} grounded claims`}
+                />
+                <div
+                  className="h-full bg-amber-400 transition-all duration-500"
+                  style={{ width: `${(inferred / totalClaims) * 100}%` }}
+                  title={`${inferred} inferred claims`}
+                />
+                <div
+                  className="h-full bg-red-400 transition-all duration-500"
+                  style={{ width: `${(unsupported / totalClaims) * 100}%` }}
+                  title={`${unsupported} unsupported claims`}
+                />
+              </div>
+              <div className="flex justify-between mt-1">
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500" />
+                  <span className="text-[9px] text-muted-foreground">Grounded ({Math.round((grounded / totalClaims) * 100)}%)</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-amber-400" />
+                  <span className="text-[9px] text-muted-foreground">Inferred ({Math.round((inferred / totalClaims) * 100)}%)</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <div className="w-2 h-2 rounded-full bg-red-400" />
+                  <span className="text-[9px] text-muted-foreground">Unsupported ({Math.round((unsupported / totalClaims) * 100)}%)</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Evaluator summary */}
+          {details.summary && (
+            <div className="rounded-md bg-white/60 border border-black/5 p-3">
+              <div className="flex items-start gap-2">
+                <Info className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                <p className="text-[11px] text-muted-foreground leading-relaxed">
+                  {details.summary}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Disclaimer */}
+          <p className="text-[9px] text-muted-foreground/60 italic text-center">
+            Accuracy is an AI self-assessment and may not reflect ground truth. Always verify critical data points.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

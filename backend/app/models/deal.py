@@ -90,6 +90,10 @@ class Section(Base):
     generated_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     custom_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Accuracy assessment (set after generation)
+    accuracy_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    accuracy_details: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+
     # Output template — markdown template the AI agent should follow
     output_template: Mapped[str | None] = mapped_column(Text, nullable=True)
     template_file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
