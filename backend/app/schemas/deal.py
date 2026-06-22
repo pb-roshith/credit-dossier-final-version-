@@ -46,6 +46,19 @@ class LinkDocumentsRequest(BaseModel):
     document_ids: list[str]
 
 
+# ── Library File (Mistral Library) ─────────────────────────────
+class LibraryFileResponse(BaseModel):
+    id: str
+    mistral_file_id: str
+    filename: str
+    source_type: str
+    file_size: Optional[int] = None
+    note: Optional[str] = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # ── Section ─────────────────────────────────────────────────────
 class SectionResponse(BaseModel):
     id: str
@@ -177,7 +190,8 @@ class DealResponse(BaseModel):
     secondary_color: str
 
     sections: list[SectionResponse] = []
-    documents: list[DealDocumentResponse] = []  # Deal-level documents
+    documents: list[DealDocumentResponse] = []  # Deal-level documents (legacy)
+    library_files: list[LibraryFileResponse] = []  # Mistral Library files
     audit_entries: list[AuditEntryResponse] = []
     versions: list[VersionResponse] = []
 

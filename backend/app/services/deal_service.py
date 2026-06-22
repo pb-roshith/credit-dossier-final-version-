@@ -11,6 +11,7 @@ from typing import Optional
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.deal import Deal, Section, AuditEntry, Version
+from app.models.library_file import LibraryFile
 
 
 # ── Default section definitions ────────────────────────────────
@@ -61,6 +62,7 @@ class DealService:
                 joinedload(Deal.sections).joinedload(Section.uploads),
                 joinedload(Deal.audit_entries),
                 joinedload(Deal.versions),
+                joinedload(Deal.library_files),
             )
             .filter(Deal.id == deal_id)
             .first()

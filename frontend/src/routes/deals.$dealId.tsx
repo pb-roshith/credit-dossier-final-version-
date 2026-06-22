@@ -4,7 +4,7 @@ import {
   ArrowLeft, FileText, Clock, Download, Sparkles, RefreshCw, Plus, TriangleAlert,
   Loader2, CheckCircle2, Upload, X, FileDown, BookOpenCheck, Trash2, FileType, Save,
   File as FileIcon, Link as LinkIcon, Type, Eye, EyeOff, BarChart3, Table as TableIcon,
-  ShieldCheck, AlertTriangle, ChevronDown, ChevronUp, Info
+  ShieldCheck, AlertTriangle, ChevronDown, ChevronUp, Info, Library
 } from "lucide-react";
 import { api, formatAmount, type Deal, type Section } from "@/lib/deals";
 import ReactMarkdown from "react-markdown";
@@ -200,7 +200,7 @@ function OverviewTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
             </div>
           </div>
           {([
-            ["Documents uploaded", deal.sections.reduce((sum, s) => sum + (s.uploads?.length || 0), 0), "bg-info/15 text-info"],
+            ["Library documents", deal.library_files?.length || 0, "bg-info/15 text-info"],
             ["Versions", deal.versions.length, "bg-muted text-muted-foreground"],
           ] as const).map(([label, v, cls]) => (
             <div key={String(label)} className="flex items-center justify-between border-t pt-3 text-sm">
@@ -271,21 +271,18 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const [outputTemplate, setOutputTemplate] = useState(active?.output_template || "");
   const [generating, setGenerating] = useState(false);
   const [draftingAll, setDraftingAll] = useState(false);
-  const [uploadType, setUploadType] = useState<"file" | "url" | "text">("file");
-  const [uploadNote, setUploadNote] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const [urlInput, setUrlInput] = useState("");
-  const [textInput, setTextInput] = useState("");
-  const [showInputs, setShowInputs] = useState(false);
-  const [selectedFileName, setSelectedFileName] = useState("");
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [uploadingTemplate, setUploadingTemplate] = useState(false);
   const [showTemplatePreview, setShowTemplatePreview] = useState(false);
 
-  // New Document Architecture State
-  const [docTab, setDocTab] = useState<"existing" | "new">("existing");
-  const [selectedDocsToLink, setSelectedDocsToLink] = useState<Set<string>>(new Set());
-  const [linkingDocs, setLinkingDocs] = useState(false);
+  // Library document upload state
+  const [showLibUpload, setShowLibUpload] = useState(false);
+  const [libUploadType, setLibUploadType] = useState<"file" | "url" | "text">("file");
+  const [libUploading, setLibUploading] = useState(false);
+  const [libUploadNote, setLibUploadNote] = useState("");
+  const [libUrlInput, setLibUrlInput] = useState("");
+  const [libTextInput, setLibTextInput] = useState("");
+  const [libSelectedFileName, setLibSelectedFileName] = useState("");
 
   useEffect(() => {
     if (active) {
@@ -293,7 +290,6 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       setCustomInstructions(active.custom_instructions || "");
       setOutputTemplate(active.output_template || "");
       setShowTemplatePreview(false);
-      setSelectedDocsToLink(new Set()); // Reset selection on section change
     }
   }, [activeId, active]);
 
@@ -323,73 +319,47 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
     }
   };
 
-  const handleUpload = async (e: React.FormEvent) => {
+  // Library upload handler
+  const handleLibUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!active || uploading) return;
-    setUploading(true);
+    if (libUploading) return;
+    setLibUploading(true);
     try {
       const formData = new FormData();
-      formData.append("source_type", uploadType);
-      formData.append("note", uploadNote);
+      formData.append("source_type", libUploadType);
+      if (libUploadNote) formData.append("note", libUploadNote);
 
-      if (uploadType === "file") {
-        const fileInput = document.getElementById("section-file-input") as HTMLInputElement;
+      if (libUploadType === "file") {
+        const fileInput = document.getElementById("lib-file-input") as HTMLInputElement;
         if (!fileInput?.files?.[0]) return;
         formData.append("file", fileInput.files[0]);
-      } else if (uploadType === "url") {
-        formData.append("url", urlInput);
+      } else if (libUploadType === "url") {
+        formData.append("url", libUrlInput);
       } else {
-        formData.append("text_content", textInput);
+        formData.append("text_content", libTextInput);
       }
 
-      // New Flow: Upload to deal-level, then auto-link to current section
-      const doc = await api.documents.upload(deal.id, formData);
-      await api.documents.linkToSection(deal.id, active.id, [doc.id]);
+      await api.library.upload(deal.id, formData);
 
-      setUploadNote("");
-      setUrlInput("");
-      setTextInput("");
-      setSelectedFileName("");
-      setShowInputs(false);
+      setLibUploadNote("");
+      setLibUrlInput("");
+      setLibTextInput("");
+      setLibSelectedFileName("");
+      setShowLibUpload(false);
       refresh();
     } catch (err) {
-      console.error("Upload failed:", err);
+      console.error("Library upload failed:", err);
     } finally {
-      setUploading(false);
+      setLibUploading(false);
     }
   };
 
-  const handleLinkExisting = async () => {
-    if (!active || linkingDocs || selectedDocsToLink.size === 0) return;
-    setLinkingDocs(true);
+  const handleDeleteLibFile = async (fileId: string) => {
     try {
-      await api.documents.linkToSection(deal.id, active.id, Array.from(selectedDocsToLink));
-      setSelectedDocsToLink(new Set());
-      setShowInputs(false);
+      await api.library.delete(deal.id, fileId);
       refresh();
     } catch (err) {
-      console.error("Link documents failed:", err);
-    } finally {
-      setLinkingDocs(false);
-    }
-  };
-
-  const handleUnlinkDocument = async (docId: string) => {
-    if (!active) return;
-    try {
-      await api.documents.unlinkFromSection(deal.id, active.id, docId);
-      refresh();
-    } catch (err) {
-      console.error("Unlink document failed:", err);
-    }
-  };
-
-  const handleDeleteUpload = async (uploadId: string) => {
-    try {
-      await api.uploads.delete(uploadId);
-      refresh();
-    } catch (err) {
-      console.error("Delete upload failed:", err);
+      console.error("Delete library file failed:", err);
     }
   };
 
@@ -443,7 +413,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const wordCount = active.generated_content ? active.generated_content.split(/\s+/).length : 0;
   const isFewShot = !!active.custom_instructions;
   const hasTemplate = !!active.output_template;
-  const docCount = (active.document_links?.length || 0) + (active.uploads?.length || 0);
+  const libDocCount = deal.library_files?.length || 0;
 
   return (
     <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
@@ -500,12 +470,6 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                     </span>
                   </span>
                   <span className="flex items-center gap-1.5 shrink-0 ml-2">
-                    {/* Indicators */}
-                    {s.uploads && s.uploads.length > 0 && (
-                      <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-bold text-blue-700" title={`${s.uploads.length} document(s)`}>
-                        {s.uploads.length}📄
-                      </span>
-                    )}
                     {s.output_template && (
                       <span className="rounded-full bg-violet-100 px-1 py-0.5 text-[9px] text-violet-700" title="Has template">
                         📋
@@ -569,262 +533,153 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
           </div>
         </div>
 
-        {/* ── Grounding Data — Improved Document Upload ── */}
+        {/* ── Document Library (Centralized) ── */}
         <div className="doc-card">
           <div className="doc-section-header justify-between">
             <span className="flex items-center gap-2">
-              <Upload className="h-4 w-4 shrink-0" />
-              Section Documents
-              {docCount > 0 && (
+              <Library className="h-4 w-4 shrink-0" />
+              Document Library
+              {libDocCount > 0 && (
                 <span className="rounded-full bg-blue-500/20 text-blue-700 px-2 py-0.5 text-[10px] font-bold">
-                  {docCount} file{docCount !== 1 ? "s" : ""}
+                  {libDocCount} file{libDocCount !== 1 ? "s" : ""}
                 </span>
               )}
             </span>
             <button
-              onClick={() => setShowInputs(!showInputs)}
+              onClick={() => setShowLibUpload(!showLibUpload)}
               className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-medium transition-colors ${
-                showInputs
+                showLibUpload
                   ? "border-red-300/50 bg-red-500/20 text-white hover:bg-red-500/30"
                   : "border-primary-foreground/30 bg-primary-foreground/15 text-primary-foreground hover:bg-primary-foreground/25"
               }`}
             >
-              {showInputs ? <X className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
-              {showInputs ? "Cancel" : "Add Document"}
+              {showLibUpload ? <X className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+              {showLibUpload ? "Cancel" : "Add Document"}
             </button>
           </div>
 
-          {showInputs && (
-            <div className="p-4 bg-surface/50 border-b space-y-4">
-              {/* Tabs */}
-              <div className="flex gap-2 border-b border-border/50 pb-2">
-                <button
-                  type="button"
-                  onClick={() => setDocTab("existing")}
-                  className={`px-3 py-1 text-[11px] font-semibold uppercase tracking-wider rounded-md transition-colors ${
-                    docTab === "existing" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted"
-                  }`}
-                >
-                  Select Existing ({deal.documents?.length || 0})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDocTab("new")}
-                  className={`px-3 py-1 text-[11px] font-semibold uppercase tracking-wider rounded-md transition-colors ${
-                    docTab === "new" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted"
-                  }`}
-                >
-                  Upload New
-                </button>
-              </div>
+          {/* Info banner */}
+          <div className="px-4 py-2 bg-blue-50/50 border-b border-blue-100/50 flex items-center gap-2">
+            <Info className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+            <span className="text-[10px] text-blue-700">
+              All documents are shared across every section. Each AI agent automatically searches this library for relevant data.
+            </span>
+          </div>
 
-              {docTab === "existing" && (
-                <div className="space-y-3">
-                  <div className="max-h-48 overflow-y-auto rounded-md border bg-background">
-                    {deal.documents?.length === 0 ? (
-                      <div className="p-4 text-center text-xs text-muted-foreground">No documents in deal library yet.</div>
+          {showLibUpload && (
+            <div className="p-4 bg-surface/50 border-b space-y-3">
+              <form onSubmit={handleLibUpload} className="space-y-3">
+                <div className="flex gap-1 rounded-lg bg-muted p-0.5">
+                  {[
+                    { type: "file" as const, label: "File", Icon: FileIcon },
+                    { type: "url" as const, label: "URL", Icon: LinkIcon },
+                    { type: "text" as const, label: "Text", Icon: Type },
+                  ].map(({ type, label, Icon }) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setLibUploadType(type)}
+                      className={`flex-1 inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                        libUploadType === type
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <Icon className="h-3 w-3" /> {label}
+                    </button>
+                  ))}
+                </div>
+
+                {libUploadType === "file" && (
+                  <div className="relative rounded-lg border-2 border-dashed border-muted-foreground/30 bg-muted/20 p-6 text-center hover:bg-muted/40 hover:border-primary/40 transition-colors cursor-pointer">
+                    <input
+                      type="file"
+                      id="lib-file-input"
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                      accept=".pdf,.docx,.doc,.xlsx,.xls,.pptx,.csv,.txt,.md,.json"
+                      onChange={(e) => setLibSelectedFileName(e.target.files?.[0]?.name || "")}
+                    />
+                    <FileIcon className={`h-8 w-8 mx-auto mb-3 ${libSelectedFileName ? 'text-primary' : 'text-muted-foreground/60'}`} />
+                    {libSelectedFileName ? (
+                      <div className="text-sm font-semibold text-primary break-all px-4">{libSelectedFileName}</div>
                     ) : (
-                      <ul className="divide-y">
-                        {deal.documents?.map(doc => {
-                          const isLinked = active.document_links?.some(l => l.document.id === doc.id);
-                          const isSelected = selectedDocsToLink.has(doc.id);
-                          return (
-                            <li
-                              key={doc.id}
-                              className={`flex items-center px-3 py-2 cursor-pointer transition-colors ${
-                                isLinked ? "bg-muted/30 opacity-70 cursor-not-allowed" : "hover:bg-muted/50"
-                              }`}
-                              onClick={() => {
-                                if (isLinked) return;
-                                const newSet = new Set(selectedDocsToLink);
-                                if (isSelected) newSet.delete(doc.id);
-                                else newSet.add(doc.id);
-                                setSelectedDocsToLink(newSet);
-                              }}
-                            >
-                              <input
-                                type="checkbox"
-                                className="mr-3 h-3.5 w-3.5"
-                                checked={isLinked || isSelected}
-                                disabled={isLinked}
-                                readOnly
-                              />
-                              <div className="flex-1 min-w-0 flex items-center justify-between">
-                                <div className="text-xs font-medium truncate">{doc.filename || doc.url || "Text Document"}</div>
-                                <div className="text-[10px] text-muted-foreground flex gap-2">
-                                  {doc.extraction_method === "mistral_ocr" && <span className="text-emerald-600 font-semibold">⚡ OCR</span>}
-                                  <span>{doc.page_count} pg</span>
-                                </div>
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ul>
+                      <>
+                        <div className="text-sm font-medium text-foreground mb-1">Click to browse or drag and drop</div>
+                        <div className="text-[10px] text-muted-foreground">PDF, DOCX, XLSX, PPTX, CSV, TXT, MD</div>
+                      </>
                     )}
                   </div>
-                  <div className="flex justify-end">
-                    <button
-                      onClick={handleLinkExisting}
-                      disabled={linkingDocs || selectedDocsToLink.size === 0}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-                    >
-                      {linkingDocs ? <Loader2 className="h-3 w-3 animate-spin" /> : <LinkIcon className="h-3 w-3" />}
-                      Link Selected ({selectedDocsToLink.size})
-                    </button>
-                  </div>
+                )}
+                {libUploadType === "url" && (
+                  <input
+                    placeholder="https://example.com/document.pdf"
+                    value={libUrlInput}
+                    onChange={e => setLibUrlInput(e.target.value)}
+                    className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  />
+                )}
+                {libUploadType === "text" && (
+                  <textarea
+                    placeholder="Paste document content here…"
+                    value={libTextInput}
+                    onChange={e => setLibTextInput(e.target.value)}
+                    rows={4}
+                    className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  />
+                )}
+
+                <div className="flex gap-2">
+                  <input
+                    placeholder="Note (optional)"
+                    value={libUploadNote}
+                    onChange={e => setLibUploadNote(e.target.value)}
+                    className="flex-1 h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  />
+                  <button
+                    type="submit"
+                    disabled={libUploading}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
+                  >
+                    {libUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                    Upload to Library
+                  </button>
                 </div>
-              )}
-
-              {docTab === "new" && (
-                <form onSubmit={handleUpload} className="space-y-3">
-                  <div className="flex gap-1 rounded-lg bg-muted p-0.5">
-                    {[
-                      { type: "file" as const, label: "File", Icon: FileIcon },
-                      { type: "url" as const, label: "URL", Icon: LinkIcon },
-                      { type: "text" as const, label: "Text", Icon: Type },
-                    ].map(({ type, label, Icon }) => (
-                      <button
-                        key={type}
-                        type="button"
-                        onClick={() => setUploadType(type)}
-                        className={`flex-1 inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                          uploadType === type
-                            ? "bg-background text-foreground shadow-sm"
-                            : "text-muted-foreground hover:text-foreground"
-                        }`}
-                      >
-                        <Icon className="h-3 w-3" /> {label}
-                      </button>
-                    ))}
-                  </div>
-
-                  {uploadType === "file" && (
-                    <div className="relative rounded-lg border-2 border-dashed border-muted-foreground/30 bg-muted/20 p-6 text-center hover:bg-muted/40 hover:border-primary/40 transition-colors cursor-pointer">
-                      <input
-                        type="file"
-                        id="section-file-input"
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                        accept=".pdf,.docx,.doc,.xlsx,.xls,.pptx,.csv,.txt,.md,.json"
-                        onChange={(e) => setSelectedFileName(e.target.files?.[0]?.name || "")}
-                      />
-                      <FileIcon className={`h-8 w-8 mx-auto mb-3 ${selectedFileName ? 'text-primary' : 'text-muted-foreground/60'}`} />
-                      {selectedFileName ? (
-                        <div className="text-sm font-semibold text-primary break-all px-4">{selectedFileName}</div>
-                      ) : (
-                        <>
-                          <div className="text-sm font-medium text-foreground mb-1">Click to browse or drag and drop</div>
-                          <div className="text-[10px] text-muted-foreground">PDF, DOCX, XLSX, PPTX, CSV, TXT, MD</div>
-                        </>
-                      )}
-                    </div>
-                  )}
-                  {uploadType === "url" && (
-                    <input
-                      placeholder="https://example.com/document.pdf"
-                      value={urlInput}
-                      onChange={e => setUrlInput(e.target.value)}
-                      className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    />
-                  )}
-                  {uploadType === "text" && (
-                    <textarea
-                      placeholder="Paste document content here…"
-                      value={textInput}
-                      onChange={e => setTextInput(e.target.value)}
-                      rows={4}
-                      className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    />
-                  )}
-
-                  <div className="flex gap-2">
-                    <input
-                      placeholder="Note (optional)"
-                      value={uploadNote}
-                      onChange={e => setUploadNote(e.target.value)}
-                      className="flex-1 h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                    />
-                    <button
-                      type="submit"
-                      disabled={uploading}
-                      className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
-                    >
-                      {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                      Upload & Link
-                    </button>
-                  </div>
-                </form>
-              )}
+              </form>
             </div>
           )}
 
-          {docCount > 0 ? (
+          {libDocCount > 0 ? (
             <ul className="divide-y">
-              {/* Render New Architecture Documents */}
-              {active.document_links?.map(link => {
-                const doc = link.document;
+              {deal.library_files.map(lf => {
                 const typeConfig: Record<string, { color: string; icon: string }> = {
                   file: { color: "bg-blue-100 text-blue-700 border-blue-200", icon: "📄" },
                   url: { color: "bg-green-100 text-green-700 border-green-200", icon: "🔗" },
                   text: { color: "bg-orange-100 text-orange-700 border-orange-200", icon: "📝" },
                 };
-                const cfg = typeConfig[doc.source_type] || typeConfig.file;
+                const cfg = typeConfig[lf.source_type] || typeConfig.file;
+                const sizeStr = lf.file_size ? `${(lf.file_size / 1024).toFixed(0)} KB` : "";
 
                 return (
-                  <li key={link.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-surface/50 transition-colors group">
+                  <li key={lf.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-surface/50 transition-colors group">
                     <div className="flex items-center gap-3 min-w-0">
                       <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-bold uppercase shrink-0 ${cfg.color}`}>
-                        {cfg.icon} {doc.source_type}
+                        {cfg.icon} {lf.source_type}
                       </span>
                       <div className="min-w-0">
                         <div className="text-xs font-medium truncate">
-                          {doc.filename || doc.url || "Text document"}
+                          {lf.filename}
                         </div>
                         <div className="text-[10px] text-muted-foreground flex gap-2 items-center">
-                          {doc.extraction_method === "mistral_ocr" && <span className="text-emerald-600 font-semibold">⚡ OCR</span>}
-                          {doc.page_count !== null && <span>{doc.page_count} pg</span>}
-                          {doc.note && <span className="truncate max-w-[150px]">• {doc.note}</span>}
+                          <span className="text-emerald-600 font-semibold">⚡ Mistral Library</span>
+                          {sizeStr && <span>{sizeStr}</span>}
+                          {lf.note && <span className="truncate max-w-[150px]">• {lf.note}</span>}
                         </div>
                       </div>
                     </div>
                     <button
-                      onClick={() => handleUnlinkDocument(doc.id)}
+                      onClick={() => handleDeleteLibFile(lf.id)}
                       className="rounded-md p-1.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all"
-                      title="Unlink document from section"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </li>
-                );
-              })}
-              
-              {/* Render Legacy Uploads */}
-              {active.uploads?.map(upl => {
-                const typeConfig: Record<string, { color: string; icon: string }> = {
-                  file: { color: "bg-slate-100 text-slate-700 border-slate-200", icon: "📄" },
-                  url: { color: "bg-slate-100 text-slate-700 border-slate-200", icon: "🔗" },
-                  text: { color: "bg-slate-100 text-slate-700 border-slate-200", icon: "📝" },
-                };
-                const cfg = typeConfig[upl.source_type] || typeConfig.file;
-
-                return (
-                  <li key={upl.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-surface/50 transition-colors group">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-bold uppercase shrink-0 ${cfg.color}`}>
-                        {cfg.icon} Legacy
-                      </span>
-                      <div className="min-w-0">
-                        <div className="text-xs font-medium truncate">
-                          {upl.filename || upl.url || "Text input"}
-                        </div>
-                        {upl.note && (
-                          <div className="text-[10px] text-muted-foreground truncate">{upl.note}</div>
-                        )}
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => handleDeleteUpload(upl.id)}
-                      className="rounded-md p-1.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all"
-                      title="Remove legacy upload"
+                      title="Remove from library"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -832,14 +687,14 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                 );
               })}
             </ul>
-          ) : !showInputs ? (
+          ) : !showLibUpload ? (
             <div className="px-4 py-6 text-center">
-              <Upload className="h-6 w-6 mx-auto mb-2 text-muted-foreground/40" />
+              <Library className="h-6 w-6 mx-auto mb-2 text-muted-foreground/40" />
               <div className="text-xs text-muted-foreground">
-                No documents attached to this section.
+                No documents in the library yet.
               </div>
               <div className="text-[10px] text-muted-foreground/60 mt-1">
-                Upload files to ground the AI agent with real data.
+                Upload files to enable AI agents to use real data for grounding.
               </div>
             </div>
           ) : null}
@@ -1025,7 +880,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                     </span>
                   )}
                   <span className="text-[10px] text-emerald-600">
-                    {docCount > 0 ? `${docCount} doc(s) grounded` : "No docs"} · Mistral AI
+                    {libDocCount > 0 ? `${libDocCount} library doc(s)` : "No docs"} · Mistral Agent
                   </span>
                 </div>
               </div>
@@ -1044,7 +899,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               <div>
                 <div className="font-semibold text-foreground">No AI draft yet</div>
                 <div className="text-sm text-muted-foreground mt-1 max-w-sm">
-                  Upload section documents, add custom instructions (few-shot), and optionally set an output template. Then generate the draft.
+                  Upload documents to the library, add custom instructions (few-shot), and optionally set an output template. Then generate the draft.
                 </div>
               </div>
               <button
@@ -1074,7 +929,7 @@ function AccuracyPanel({ section }: { section: Section }) {
       <div className="flex items-center gap-2 px-5 py-2 bg-slate-50 border-b border-slate-100">
         <Info className="h-3.5 w-3.5 text-slate-400" />
         <span className="text-[10px] text-slate-500 italic">
-          Accuracy not assessed — no grounding documents attached
+          Accuracy not assessed — no library documents available
         </span>
       </div>
     );
@@ -1338,7 +1193,7 @@ function CustomTable({ children, primaryColor, secondaryColor, ...props }: any) 
 
   const yKeys = headers.slice(1);
   const xKey = headers[0];
-  const colors = [primaryColor || "#0f172a", secondaryColor || "#334155", "#64748b", "#94a3b8", "#cbd5e1"];
+  const chartColors = [primaryColor || "#0f172a", secondaryColor || "#334155", "#64748b", "#94a3b8", "#cbd5e1"];
 
   return (
     <div className="my-6 rounded-md border bg-card text-card-foreground shadow-sm overflow-hidden">
@@ -1380,7 +1235,7 @@ function CustomTable({ children, primaryColor, secondaryColor, ...props }: any) 
                 />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: "12px", paddingTop: "20px" }} />
                 {yKeys.map((key, i) => (
-                  <Bar key={key} dataKey={key} fill={colors[i % colors.length]} radius={[4, 4, 0, 0]} maxBarSize={50} />
+                  <Bar key={key} dataKey={key} fill={chartColors[i % chartColors.length]} radius={[4, 4, 0, 0]} maxBarSize={50} />
                 ))}
               </BarChart>
             </ResponsiveContainer>

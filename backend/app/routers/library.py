@@ -1,0 +1,183 @@
+"""
+Library API router — centralized document library management via Mistral.
+
+All documents are uploaded to one shared Mistral Library per deal.
+Every section's agent can search the entire library for RAG.
+"""
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from sqlalchemy.orm import Session, joinedload
+
+from app.database import get_db
+from app.models.deal import Deal
+from app.models.library_file import LibraryFile
+from app.schemas.deal import LibraryFileResponse
+from app.services.mistral_library_service import MistralLibraryService
+
+import httpx
+
+router = APIRouter(prefix="/api/deals/{deal_id}/library", tags=["library"])
+
+
+@router.get("", response_model=list[LibraryFileResponse])
+def list_library_files(deal_id: str, db: Session = Depends(get_db)):
+    """List all files in the deal's Mistral Library."""
+    deal = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+
+    files = (
+        db.query(LibraryFile)
+        .filter(LibraryFile.deal_id == deal_id)
+        .order_by(LibraryFile.created_at)
+        .all()
+    )
+    return files
+
+
+@router.post("", response_model=LibraryFileResponse, status_code=201)
+async def upload_to_library(
+    deal_id: str,
+    source_type: str = Form(..., description="file, url, or text"),
+    file: UploadFile | None = File(None),
+    url: str | None = Form(None),
+    text_content: str | None = Form(None),
+    note: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Upload a document to the deal's Mistral Library.
+
+    - source_type='file': Upload a file (PDF, DOCX, XLSX, etc.)
+    - source_type='url': Fetch content from a URL
+    - source_type='text': Paste text directly
+
+    Files are uploaded to Mistral's managed library for RAG access
+    by all section agents.
+    """
+    deal = (
+        db.query(Deal)
+        .options(joinedload(Deal.library_files))
+        .filter(Deal.id == deal_id)
+        .first()
+    )
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+
+    if source_type == "file":
+        if not file:
+            raise HTTPException(
+                status_code=400, detail="File is required for source_type='file'"
+            )
+        file_bytes = await file.read()
+        filename = file.filename or "uploaded_file"
+        lib_file = await MistralLibraryService.upload_file_to_library(
+            db=db,
+            deal=deal,
+            file_bytes=file_bytes,
+            filename=filename,
+            source_type="file",
+            note=note,
+        )
+
+    elif source_type == "url":
+        if not url:
+            raise HTTPException(
+                status_code=400, detail="URL is required for source_type='url'"
+            )
+        # Fetch content from URL
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as http_client:
+                response = await http_client.get(url)
+                response.raise_for_status()
+                file_bytes = response.content
+                filename = url.split("/")[-1] or "downloaded_file.txt"
+                content_type = response.headers.get("content-type", "")
+                if "text" in content_type or "json" in content_type:
+                    if not filename.endswith((".txt", ".json", ".csv", ".md")):
+                        filename = filename + ".txt"
+        except Exception as e:
+            raise HTTPException(
+                status_code=400, detail=f"Failed to fetch URL: {str(e)}"
+            )
+
+        lib_file = await MistralLibraryService.upload_file_to_library(
+            db=db,
+            deal=deal,
+            file_bytes=file_bytes,
+            filename=filename,
+            source_type="url",
+            note=note or url,
+        )
+
+    elif source_type == "text":
+        if not text_content:
+            raise HTTPException(
+                status_code=400,
+                detail="text_content is required for source_type='text'",
+            )
+        file_bytes = text_content.encode("utf-8")
+        filename = "pasted_text.txt"
+        lib_file = await MistralLibraryService.upload_file_to_library(
+            db=db,
+            deal=deal,
+            file_bytes=file_bytes,
+            filename=filename,
+            source_type="text",
+            note=note,
+        )
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="source_type must be 'file', 'url', or 'text'",
+        )
+
+    return lib_file
+
+
+@router.delete("/{file_id}", status_code=204)
+async def delete_library_file(
+    deal_id: str,
+    file_id: str,
+    db: Session = Depends(get_db),
+):
+    """Remove a file from the Mistral Library."""
+    deal = db.query(Deal).filter(Deal.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+
+    deleted = await MistralLibraryService.delete_library_file(db, deal, file_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Library file not found")
+
+
+@router.post("/initialize", status_code=200)
+async def initialize_library(
+    deal_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Initialize the Mistral Library + all 16 section agents for a deal.
+    Idempotent — safe to call multiple times.
+    """
+    deal = (
+        db.query(Deal)
+        .options(joinedload(Deal.sections))
+        .filter(Deal.id == deal_id)
+        .first()
+    )
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+
+    # Create library
+    library_id = await MistralLibraryService.create_library(db, deal)
+
+    # Create all agents
+    agents = await MistralLibraryService.create_all_agents(db, deal)
+
+    return {
+        "library_id": library_id,
+        "agents_created": len(agents),
+        "agent_keys": list(agents.keys()),
+    }

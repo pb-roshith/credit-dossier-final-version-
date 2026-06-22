@@ -1,6 +1,6 @@
 /**
  * API client for Credit Dossier backend.
- * Replaces the localStorage-based dealsStore.
+ * Supports Mistral Library + Agents architecture.
  */
 
 const API_BASE = "/api";
@@ -36,6 +36,16 @@ export type SectionDocumentLink = {
   created_at: string;
 };
 
+export type LibraryFile = {
+  id: string;
+  mistral_file_id: string;
+  filename: string;
+  source_type: string;
+  file_size: number | null;
+  note: string | null;
+  created_at: string;
+};
+
 export type Section = {
   id: string;
   section_key: string;
@@ -59,7 +69,7 @@ export type Section = {
   output_template: string | null;
   template_file_path: string | null;
   uploads: UploadBrief[]; // Legacy
-  document_links: SectionDocumentLink[]; // New architecture
+  document_links: SectionDocumentLink[]; // Legacy
 };
 
 export type AuditEntry = {
@@ -101,13 +111,15 @@ export type Deal = {
   updated_at: string;
   primary_color?: string;
   secondary_color?: string;
+  mistral_library_id?: string | null;
   sections: Section[];
-  documents: DealDocument[];
+  documents: DealDocument[]; // Legacy
+  library_files: LibraryFile[]; // Mistral Library
   audit_entries: AuditEntry[];
   versions: Version[];
 };
 
-export type DealListItem = Omit<Deal, "sections" | "audit_entries" | "versions"> & {
+export type DealListItem = Omit<Deal, "sections" | "audit_entries" | "versions" | "documents" | "library_files"> & {
   sections_ready: number;
   sections_total: number;
   versions_count: number;
@@ -231,6 +243,27 @@ export const api = {
       }),
   },
 
+  // Mistral Document Library (NEW)
+  library: {
+    list: (dealId: string) =>
+      request<LibraryFile[]>(`${API_BASE}/deals/${dealId}/library`),
+    upload: async (dealId: string, formData: FormData) => {
+      const res = await fetch(`${API_BASE}/deals/${dealId}/library`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) throw new Error(`Library upload failed: ${res.status}`);
+      return res.json() as Promise<LibraryFile>;
+    },
+    delete: (dealId: string, fileId: string) =>
+      request<void>(`${API_BASE}/deals/${dealId}/library/${fileId}`, { method: "DELETE" }),
+    initialize: (dealId: string) =>
+      request<{ library_id: string; agents_created: number; agent_keys: string[] }>(
+        `${API_BASE}/deals/${dealId}/library/initialize`,
+        { method: "POST" }
+      ),
+  },
+
   // Versions
   versions: {
     submit: (dealId: string, notes: string) =>
@@ -244,7 +277,7 @@ export const api = {
       }),
   },
 
-  // Deal Documents (New Architecture)
+  // Deal Documents (Legacy — kept for backward compat)
   documents: {
     list: (dealId: string) =>
       request<DealDocument[]>(`${API_BASE}/deals/${dealId}/documents`),
@@ -276,7 +309,7 @@ export const api = {
     create: async (dealId: string, sectionId: string, formData: FormData) => {
       const res = await fetch(`${API_BASE}/deals/${dealId}/sections/${sectionId}/uploads`, {
         method: "POST",
-        body: formData, // No Content-Type header — browser sets multipart boundary
+        body: formData,
       });
       if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
       return res.json() as Promise<UploadBrief>;

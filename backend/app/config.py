@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # ── Mistral AI ──────────────────────────────────────────────
     MISTRAL_API_KEY: str = "your_mistral_api_key_here"
     MISTRAL_MODEL: str = "mistral-large-latest"
+    MISTRAL_AGENT_MODEL: str = "mistral-large-latest"
 
     # ── Database ────────────────────────────────────────────────
     # SQLite:      sqlite:///./credit_dossier.db
