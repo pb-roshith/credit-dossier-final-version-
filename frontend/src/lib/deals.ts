@@ -111,6 +111,7 @@ export type Deal = {
   updated_at: string;
   primary_color?: string;
   secondary_color?: string;
+  theme_palette?: string[];
   mistral_library_id?: string | null;
   sections: Section[];
   documents: DealDocument[]; // Legacy

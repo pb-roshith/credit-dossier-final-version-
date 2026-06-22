@@ -1,72 +1,76 @@
-import json
 import logging
-import re
+import io
+import json
 from typing import Optional
 from pydantic import BaseModel
-
-from mistralai.client import Mistral
-
-from app.config import settings
+from colorthief import ColorThief
+import fitz  # PyMuPDF
 
 logger = logging.getLogger(__name__)
 
 class ThemeExtractionResponse(BaseModel):
     primary_color: str
     secondary_color: str
+    theme_palette: list[str]
 
-def extract_theme_from_text(document_text: str) -> Optional[ThemeExtractionResponse]:
+def rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+    return "#{:02x}{:02x}{:02x}".format(rgb[0], rgb[1], rgb[2])
+
+def extract_theme_from_document_bytes(file_bytes: bytes, filename: str) -> Optional[ThemeExtractionResponse]:
     """
-    Uses Mistral to extract the primary and secondary corporate hex colors 
-    based on the brand/company identified in the text.
+    Extracts visual colors directly from the uploaded document using PyMuPDF and ColorThief.
     """
-    if not settings.MISTRAL_API_KEY:
-        logger.warning("Mistral API key not configured, returning default theme.")
-        return None
-
-    client = Mistral(api_key=settings.MISTRAL_API_KEY)
-    
-    system_prompt = (
-        "You are an expert brand designer and data extractor. Your task is to identify "
-        "the primary company or brand mentioned in the provided text. Based on your world "
-        "knowledge of that brand, provide their 2 primary corporate hex colors.\n\n"
-        "If you cannot identify the brand or their colors, return a default classic annual "
-        "report theme (Primary: #002060, Secondary: #800020).\n\n"
-        "Respond ONLY with a valid JSON object matching this schema:\n"
-        "{\n"
-        '  "primary_color": "#HEXCODE",\n'
-        '  "secondary_color": "#HEXCODE"\n'
-        "}\n"
-    )
-
-    truncated_text = document_text[:15000]
-
     try:
-        response = client.chat.complete(
-            model=settings.MISTRAL_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Document text:\n{truncated_text}"}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.2
+        # If it's a PDF, render the first page to get corporate branding
+        if filename.lower().endswith(".pdf"):
+            doc = fitz.open(stream=file_bytes, filetype="pdf")
+            if len(doc) == 0:
+                return None
+                
+            page = doc.load_page(0)
+            pix = page.get_pixmap()
+            
+            # Save the pixmap to a memory buffer as PNG
+            img_bytes = pix.tobytes("png")
+            img_io = io.BytesIO(img_bytes)
+        else:
+            # Assume it's an image file directly
+            img_io = io.BytesIO(file_bytes)
+            
+        color_thief = ColorThief(img_io)
+        
+        # Build palette of 5 colors, ignoring pure white backgrounds
+        # get_palette returns a list of RGB tuples
+        palette_rgb = color_thief.get_palette(color_count=6, quality=1)
+        
+        # Filter out near-white and near-black colors to find actual brand colors
+        vibrant_colors = []
+        for rgb in palette_rgb:
+            r, g, b = rgb
+            # Filter out whites/grays
+            if r > 240 and g > 240 and b > 240:
+                continue
+            # Filter out black
+            if r < 15 and g < 15 and b < 15:
+                continue
+            vibrant_colors.append(rgb_to_hex((r, g, b)))
+            
+        # If we didn't find enough colors, just use whatever was extracted
+        if not vibrant_colors:
+            vibrant_colors = [rgb_to_hex(rgb) for rgb in palette_rgb]
+            
+        # Pad palette up to 5 colors if necessary
+        default_palette = ["#002060", "#800020", "#1e293b", "#3b82f6", "#f59e0b"]
+        final_palette = vibrant_colors[:5]
+        while len(final_palette) < 5:
+            final_palette.append(default_palette[len(final_palette)])
+            
+        return ThemeExtractionResponse(
+            primary_color=final_palette[0],
+            secondary_color=final_palette[1],
+            theme_palette=final_palette
         )
         
-        content = response.choices[0].message.content
-        logger.info(f"Theme extraction raw response: {content}")
-        
-        # Clean up any potential markdown code blocks
-        clean_content = re.sub(r'```json\n?(.*?)\n?```', r'\1', content, flags=re.DOTALL).strip()
-        data = json.loads(clean_content)
-        
-        primary = data.get("primary_color", "#002060")
-        secondary = data.get("secondary_color", "#800020")
-        
-        # Simple validation
-        if not re.match(r'^#[0-9a-fA-F]{6}$', primary): primary = "#002060"
-        if not re.match(r'^#[0-9a-fA-F]{6}$', secondary): secondary = "#800020"
-            
-        return ThemeExtractionResponse(primary_color=primary, secondary_color=secondary)
-    
     except Exception as e:
-        logger.error(f"Error during theme extraction: {e}")
+        logger.error(f"Error during visual theme extraction: {e}")
         return None

@@ -23,15 +23,15 @@ function DealDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchDeal = useCallback(() => {
-    setLoading(true);
+  const fetchDeal = useCallback((isRefresh = false) => {
+    if (!isRefresh) setLoading(true);
     api.deals.get(dealId)
       .then(setDeal)
       .catch(err => setError(err.message))
       .finally(() => setLoading(false));
   }, [dealId]);
 
-  useEffect(() => { fetchDeal(); }, [fetchDeal]);
+  useEffect(() => { fetchDeal(false); }, [fetchDeal]);
 
   if (loading) {
     return (
@@ -99,10 +99,10 @@ function DealDetail() {
         ))}
       </div>
 
-      {tab === "overview" && <OverviewTab deal={deal} refresh={fetchDeal} />}
-      {tab === "narratives" && <NarrativesTab deal={deal} refresh={fetchDeal} />}
-      {tab === "versions" && <VersionsTab deal={deal} refresh={fetchDeal} />}
-      {tab === "export" && <ExportTab deal={deal} refresh={fetchDeal} />}
+      {tab === "overview" && <OverviewTab deal={deal} refresh={() => fetchDeal(true)} />}
+      {tab === "narratives" && <NarrativesTab deal={deal} refresh={() => fetchDeal(true)} />}
+      {tab === "versions" && <VersionsTab deal={deal} refresh={() => fetchDeal(true)} />}
+      {tab === "export" && <ExportTab deal={deal} refresh={() => fetchDeal(true)} />}
     </main>
   );
 }
@@ -112,44 +112,6 @@ function DealDetail() {
 function OverviewTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const ready = deal.sections.filter(s => !s.optional && s.state === "ready").length;
   const total = deal.sections.filter(s => !s.optional).length;
-  
-  const [extractingTheme, setExtractingTheme] = useState(false);
-  
-  const handleExtractTheme = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setExtractingTheme(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch(`/api/deals/${deal.id}/theme/extract`, {
-        method: "POST",
-        body: formData,
-      });
-      if (!res.ok) throw new Error(await res.text());
-      refresh();
-    } catch (err) {
-      console.error("Theme extraction failed:", err);
-      alert("Failed to extract theme. Try a different file.");
-    } finally {
-      setExtractingTheme(false);
-      e.target.value = "";
-    }
-  };
-
-  const handleColorChange = async (type: "primary_color" | "secondary_color", value: string) => {
-    try {
-      const res = await fetch(`/api/deals/${deal.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ [type]: value }),
-      });
-      if (!res.ok) throw new Error("Failed to update color");
-      refresh();
-    } catch (err) {
-      console.error(err);
-    }
-  };
 
   return (
     <div className="space-y-4">
@@ -211,52 +173,6 @@ function OverviewTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
         </div>
       </div>
 
-      <div className="doc-card">
-        <div className="doc-section-header"><Sparkles className="h-4 w-4 shrink-0 text-primary" /><span>Brand &amp; Theme Extraction</span></div>
-        <div className="p-5">
-          <p className="mb-4 text-sm text-muted-foreground">
-            Upload an Annual Report or corporate presentation to let the AI automatically extract the company's brand colors. Or, manually set your preferred hex codes.
-          </p>
-          <div className="flex flex-wrap items-center gap-6">
-            <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Extract Theme</label>
-              <label className="btn-primary inline-flex cursor-pointer items-center gap-2">
-                {extractingTheme ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-                {extractingTheme ? "Extracting..." : "Upload Document"}
-                <input type="file" className="hidden" accept=".pdf,.txt" onChange={handleExtractTheme} disabled={extractingTheme} />
-              </label>
-            </div>
-            
-            <div className="flex items-center gap-4">
-              <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Primary Color</label>
-                <div className="flex items-center gap-2 rounded-md border p-1 shadow-sm">
-                  <input 
-                    type="color" 
-                    value={deal.primary_color || "#002060"} 
-                    onChange={(e) => handleColorChange("primary_color", e.target.value)}
-                    className="h-8 w-8 cursor-pointer rounded border-none p-0 outline-none"
-                  />
-                  <span className="font-mono text-sm font-medium">{deal.primary_color || "#002060"}</span>
-                </div>
-              </div>
-              
-              <div>
-                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Secondary Color</label>
-                <div className="flex items-center gap-2 rounded-md border p-1 shadow-sm">
-                  <input 
-                    type="color" 
-                    value={deal.secondary_color || "#800020"} 
-                    onChange={(e) => handleColorChange("secondary_color", e.target.value)}
-                    className="h-8 w-8 cursor-pointer rounded border-none p-0 outline-none"
-                  />
-                  <span className="font-mono text-sm font-medium">{deal.secondary_color || "#800020"}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 }
@@ -1452,8 +1368,96 @@ function ExportTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
     }
   };
 
+  const [extractingTheme, setExtractingTheme] = useState(false);
+  
+  const handleExtractTheme = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setExtractingTheme(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`/api/deals/${deal.id}/theme/extract`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) throw new Error(await res.text());
+      refresh();
+    } catch (err) {
+      console.error("Theme extraction failed:", err);
+      alert("Failed to extract theme. Try a different file.");
+    } finally {
+      setExtractingTheme(false);
+      e.target.value = "";
+    }
+  };
+
+  const handlePaletteChange = async (index: number, value: string) => {
+    try {
+      const currentPalette = deal.theme_palette || ["#002060", "#800020", "#1e293b", "#3b82f6", "#f59e0b"];
+      const newPalette = [...currentPalette];
+      newPalette[index] = value;
+      
+      const payload: any = {
+        theme_palette: JSON.stringify(newPalette)
+      };
+      
+      // Keep primary/secondary in sync with first two colors
+      if (index === 0) payload.primary_color = value;
+      if (index === 1) payload.secondary_color = value;
+
+      const res = await fetch(`/api/deals/${deal.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error("Failed to update palette");
+      refresh();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   return (
     <div className="space-y-4">
+      <div className="doc-card">
+        <div className="doc-section-header"><Sparkles className="h-4 w-4 shrink-0 text-primary" /><span>Brand &amp; Theme Extraction</span></div>
+        <div className="p-5">
+          <p className="mb-4 text-sm text-muted-foreground">
+            Upload an Annual Report or corporate presentation to let the AI automatically extract the company's brand colors. Or, manually set your preferred hex codes.
+          </p>
+          <div className="flex flex-wrap items-center gap-6">
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">Extract Theme</label>
+              <label className="btn-primary inline-flex cursor-pointer items-center gap-2">
+                {extractingTheme ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                {extractingTheme ? "Extracting..." : "Upload Document"}
+                <input type="file" className="hidden" accept=".pdf,.txt" onChange={handleExtractTheme} disabled={extractingTheme} />
+              </label>
+            </div>
+            
+            <div className="flex flex-wrap items-center gap-4">
+              {(deal.theme_palette || ["#002060", "#800020", "#1e293b", "#3b82f6", "#f59e0b"]).map((color, idx) => (
+                <div key={idx}>
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    {idx === 0 ? "Primary" : idx === 1 ? "Secondary" : `Color ${idx + 1}`}
+                  </label>
+                  <div className="flex items-center gap-2 rounded-md border p-1 shadow-sm">
+                    <input 
+                      type="color" 
+                      value={color} 
+                      onChange={(e) => handlePaletteChange(idx, e.target.value)}
+                      className="h-8 w-8 cursor-pointer rounded border-none p-0 outline-none"
+                    />
+                    <span className="font-mono text-xs font-medium w-16 text-center">{color}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Generate Combined Report */}
       <div className="doc-card">
         <div className="doc-section-header"><BookOpenCheck className="h-4 w-4 shrink-0" /><span>Generate Combined Report</span></div>
@@ -1475,15 +1479,7 @@ function ExportTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       <div className="doc-card">
         <div className="doc-section-header"><Download className="h-4 w-4 shrink-0" /><span>Export Pitch Book</span></div>
         <div className="space-y-4 p-5">
-          {(pending > 0 || deal.versions.length === 0) && (
-            <div className="rounded-md border border-warning/40 bg-warning/10 p-4">
-              <div className="flex items-center gap-2 font-semibold"><TriangleAlert className="h-4 w-4" /> Export blocked</div>
-              <ul className="ml-6 mt-2 list-disc text-sm">
-                {pending > 0 && <li>{pending} mandatory section(s) not yet marked ready.</li>}
-                {deal.versions.length === 0 && <li>No approved version. Submit and approve a version first.</li>}
-              </ul>
-            </div>
-          )}
+
           <div className="grid gap-3 sm:grid-cols-3">
             {["pptx", "pdf", "docx"].map(fmt => (
               <button

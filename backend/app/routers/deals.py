@@ -8,7 +8,7 @@ import pypdf
 import io
 
 from app.database import get_db
-from app.agents.theme_agent import extract_theme_from_text
+from app.agents.theme_agent import extract_theme_from_document_bytes
 from app.schemas.deal import (
     DealCreate, DealUpdate, DealResponse, DealListResponse,
 )
@@ -103,14 +103,16 @@ async def extract_theme_from_document(deal_id: str, file: UploadFile = File(...)
         else:
             text = content.decode("utf-8", errors="ignore")
             
-        theme_resp = extract_theme_from_text(text)
+        theme_resp = extract_theme_from_document_bytes(content, file.filename or "doc.pdf")
         if theme_resp:
+            import json
             deal = DealService.update_deal(
                 db, 
                 deal_id, 
                 {
                     "primary_color": theme_resp.primary_color,
-                    "secondary_color": theme_resp.secondary_color
+                    "secondary_color": theme_resp.secondary_color,
+                    "theme_palette": json.dumps(theme_resp.theme_palette)
                 }
             )
         else:

@@ -99,25 +99,15 @@ class MistralLibraryService:
         if not deal.mistral_library_id:
             await MistralLibraryService.create_library(db, deal)
 
-        # Upload file to Mistral
-        uploaded = await client.files.upload_async(
-            file={"file_name": filename, "content": file_bytes},
-            purpose="library",
-        )
-
-        logger.info(
-            f"Uploaded {filename} to Mistral files (id={uploaded.id}) "
-            f"for library {deal.mistral_library_id}"
-        )
-
-        # Add file to the library
-        await client.beta.libraries.files.create_async(
+        # Upload document to Mistral library
+        uploaded = await client.beta.libraries.documents.upload_async(
             library_id=deal.mistral_library_id,
-            file_id=uploaded.id,
+            file={"file_name": filename, "content": file_bytes},
         )
 
         logger.info(
-            f"Added file {uploaded.id} to library {deal.mistral_library_id}"
+            f"Uploaded document {filename} to Mistral library (id={uploaded.id}) "
+            f"for library {deal.mistral_library_id}"
         )
 
         # Create local record
@@ -150,21 +140,15 @@ class MistralLibraryService:
 
         client = _get_client()
 
-        # Remove from Mistral library
+        # Remove document from Mistral library
         if deal.mistral_library_id:
             try:
-                await client.beta.libraries.files.delete_async(
+                await client.beta.libraries.documents.delete_async(
                     library_id=deal.mistral_library_id,
-                    file_id=lib_file.mistral_file_id,
+                    document_id=lib_file.mistral_file_id,
                 )
             except Exception as e:
-                logger.warning(f"Failed to remove file from library: {e}")
-
-        # Delete Mistral file
-        try:
-            await client.files.delete_async(file_id=lib_file.mistral_file_id)
-        except Exception as e:
-            logger.warning(f"Failed to delete Mistral file {lib_file.mistral_file_id}: {e}")
+                logger.warning(f"Failed to remove document from library: {e}")
 
         db.delete(lib_file)
         db.commit()
@@ -235,6 +219,7 @@ class MistralLibraryService:
             name=f"{section_title} — {deal.customer}",
             instructions=full_instructions,
             tools=tools,
+            completion_args={"temperature": 0.1},
         )
 
         # Store agent ID
@@ -363,8 +348,10 @@ class MistralLibraryService:
             )
 
             content = None
-            if response.choices and response.choices[0].message:
+            if getattr(response.choices[0], "message", None):
                 content = response.choices[0].message.content
+            elif getattr(response.choices[0], "messages", None) and len(response.choices[0].messages) > 0:
+                content = response.choices[0].messages[-1].content
 
             if not content:
                 # Retry once with slightly different prompt
@@ -374,11 +361,23 @@ class MistralLibraryService:
                     agent_id=agent_id,
                     messages=messages,
                 )
-                if response.choices and response.choices[0].message:
+                if getattr(response.choices[0], "message", None):
                     content = response.choices[0].message.content
+                elif getattr(response.choices[0], "messages", None) and len(response.choices[0].messages) > 0:
+                    content = response.choices[0].messages[-1].content
 
             if not content:
                 return f"[Generation failed — agent returned no content for {section_title}]"
+
+            # Strip common preambles/search logs that Mistral sometimes outputs
+            import re
+            # Remove "Searching [xyz] for: ..." lines at the start. 
+            # We match up to the first double newline, or heading, or bold text.
+            content = re.sub(r'^Searching\s*\[.*?\].*?(?=\n\n|\n#|\n\*\*|$)', '', content, flags=re.IGNORECASE|re.DOTALL)
+            # Remove "Here is the [xyz] section..." lines at the start
+            content = re.sub(r'^\s*Here is the.*?based on the available documents:?\s*\n*', '', content, flags=re.IGNORECASE)
+            
+            content = content.strip()
 
             logger.info(f"Agent {agent_id} generated {len(content)} chars for {section_title}")
             return content

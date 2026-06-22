@@ -23,6 +23,7 @@ CRITICAL ANTI-HALLUCINATION RULES (MANDATORY):
 7. Distinguish clearly between facts from documents and your analytical commentary.
 8. Do NOT include a title/heading for the section — the system adds that automatically.
 9. Use markdown formatting for structure (bullets, tables, bold, etc.).
+10. NEVER output any preamble, introductory text, or summary of your search actions (e.g. do NOT output "Searching for...", "Here is the section...", etc). Output ONLY the final markdown content for the section.
 """
 
 # ── Section Instructions ────────────────────────────────────────────────

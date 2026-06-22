@@ -64,18 +64,21 @@ def _clean_unprintable_chars(text: str) -> str:
     clean_text = re.sub(r'[^\x00-\x7F\xA0-\xFF\u0100-\u017F\u2013-\u2014\u2018-\u201D\u20AC\u00A3]', '', text)
     return clean_text
 
-def _markdown_to_html_with_graphs(text: str, primary_color: str, secondary_color: str) -> str:
+def _markdown_to_html_with_graphs(text: str, theme_palette: list[str]) -> str:
     """Detects numeric markdown tables, injects matplotlib charts, and converts to HTML."""
-    table_pattern = re.compile(r'(^\|[^\n]+\|\n\|[-:| ]+\|\n(?:\|[^\n]+\|\n)+)', re.MULTILINE)
+    table_pattern = re.compile(r'(^[ \t]*\|[^\n]+\|[ \t]*\n[ \t]*\|[-:| ]+\|[ \t]*\n(?:[ \t]*\|[^\n]+\|[ \t]*(?:\n|$))+)', re.MULTILINE)
     
     def replacer(match):
         table_str = match.group(1)
+        # Ensure table has empty lines around it so python-markdown parses it correctly
+        formatted_table = f"\n\n{table_str.strip()}\n\n"
+        
         df = _parse_table_data(table_str)
         if df is not None:
             try:
                 fig, ax = plt.subplots(figsize=(8, 4))
-                # Use the dynamic colors
-                colors = [primary_color, secondary_color, "#64748b", "#94a3b8", "#cbd5e1"]
+                # Use the dynamic colors from the full palette
+                colors = theme_palette if len(theme_palette) >= 5 else (theme_palette + ["#64748b", "#94a3b8", "#cbd5e1", "#334155", "#0f172a"])
                 bars = df.plot(x=df.columns[0], kind='bar', ax=ax, rot=45, color=colors[:len(df.columns)-1])
                 
                 # Add value labels
@@ -94,12 +97,12 @@ def _markdown_to_html_with_graphs(text: str, primary_color: str, secondary_color
                 plt.close(fig)
                 
                 img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-                img_tag = f"\n\n<div style='text-align:center; margin: 20px 0;'><img src='data:image/png;base64,{img_b64}' width='500' /></div>\n\n"
-                return table_str + img_tag
+                img_tag = f"<div style='text-align:center; margin: 20px 0;'><img src='data:image/png;base64,{img_b64}' width='500' /></div>\n\n"
+                return formatted_table + img_tag
             except Exception as e:
                 logger.error(f"Failed to plot table: {e}")
-                return table_str
-        return table_str
+                return formatted_table
+        return formatted_table
 
     transformed = table_pattern.sub(replacer, text)
     html = markdown.markdown(transformed, extensions=['tables'])
@@ -126,9 +129,20 @@ class ExportService:
             if s.state == "ready" and s.generated_content and s.generated_content.strip()
         ]
 
-        # Use the deal's dynamic theme colors
-        p_color = getattr(deal, "primary_color", "#002060")
-        s_color = getattr(deal, "secondary_color", "#800020")
+        # Use the deal's dynamic theme colors, handling None or empty strings
+        p_color = getattr(deal, "primary_color", None) or "#002060"
+        s_color = getattr(deal, "secondary_color", None) or "#800020"
+        
+        # Parse full palette
+        import json
+        raw_palette = getattr(deal, "theme_palette", None)
+        if raw_palette:
+            try:
+                theme_palette = json.loads(raw_palette)
+            except Exception:
+                theme_palette = [p_color, s_color, "#1e293b", "#3b82f6", "#f59e0b"]
+        else:
+            theme_palette = [p_color, s_color, "#1e293b", "#3b82f6", "#f59e0b"]
 
         html_parts = []
         
@@ -179,7 +193,7 @@ class ExportService:
         for i, section in enumerate(valid_sections, 1):
             html_parts.append(f"<h2 style='color: {p_color}; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;'>{i}. {section.title}</h2>")
             clean_content = _clean_unprintable_chars(section.generated_content)
-            content_html = _markdown_to_html_with_graphs(clean_content, p_color, s_color)
+            content_html = _markdown_to_html_with_graphs(clean_content, theme_palette)
             html_parts.append(content_html)
             if i < len(valid_sections):
                 html_parts.append(page_break)
@@ -253,11 +267,22 @@ class ExportService:
         prs.slide_width = Inches(13.333)
         prs.slide_height = Inches(7.5)
 
+        p_color = getattr(deal, "primary_color", None) or "#002060"
+        s_color = getattr(deal, "secondary_color", None) or "#800020"
+
+        # Convert hex (e.g. "#002060") to RGBColor
+        def hex_to_rgb(hex_str: str) -> RGBColor:
+            hex_str = hex_str.lstrip('#')
+            return RGBColor(int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16))
+
+        primary_rgb = hex_to_rgb(p_color)
+        secondary_rgb = hex_to_rgb(s_color)
+
         # Title slide
         slide = prs.slides.add_slide(prs.slide_layouts[6])
         fill = slide.background.fill
         fill.solid()
-        fill.fore_color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+        fill.fore_color.rgb = primary_rgb
 
         txBox = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(11), Inches(1.5))
         tf = txBox.text_frame
@@ -273,7 +298,7 @@ class ExportService:
         p2 = tf2.paragraphs[0]
         p2.text = deal.customer
         p2.font.size = Pt(28)
-        p2.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        p2.font.color.rgb = secondary_rgb
         p2.alignment = PP_ALIGN.CENTER
 
         valid_sections = [
@@ -289,7 +314,7 @@ class ExportService:
             p.text = section.title
             p.font.size = Pt(24)
             p.font.bold = True
-            p.font.color.rgb = RGBColor(0x0f, 0x17, 0x2a)
+            p.font.color.rgb = primary_rgb
 
             content = section.generated_content
             clean = _strip_markdown(content)

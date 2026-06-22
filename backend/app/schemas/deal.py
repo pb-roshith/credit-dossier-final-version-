@@ -161,6 +161,7 @@ class DealUpdate(BaseModel):
     status: Optional[str] = None
     primary_color: Optional[str] = None
     secondary_color: Optional[str] = None
+    theme_palette: Optional[str] = None
 
 
 class DealResponse(BaseModel):
@@ -188,6 +189,7 @@ class DealResponse(BaseModel):
     mistral_library_id: Optional[str] = None
     primary_color: str
     secondary_color: str
+    theme_palette: list[str] = []
 
     sections: list[SectionResponse] = []
     documents: list[DealDocumentResponse] = []  # Deal-level documents (legacy)
@@ -196,6 +198,16 @@ class DealResponse(BaseModel):
     versions: list[VersionResponse] = []
 
     model_config = {"from_attributes": True}
+
+    @field_validator("theme_palette", mode="before")
+    @classmethod
+    def parse_theme_palette(cls, v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                return ["#002060", "#800020"]
+        return v or ["#002060", "#800020"]
 
 
 class DealListResponse(BaseModel):

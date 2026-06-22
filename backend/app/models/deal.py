@@ -50,6 +50,7 @@ class Deal(Base):
     # Theme
     primary_color: Mapped[str] = mapped_column(String(16), nullable=False, default="#002060")
     secondary_color: Mapped[str] = mapped_column(String(16), nullable=False, default="#800020")
+    theme_palette: Mapped[str] = mapped_column(String(256), nullable=False, default='["#002060", "#800020"]')
 
     # Workflow
     owner: Mapped[str] = mapped_column(String(128), nullable=False, default="Analyst")
