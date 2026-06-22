@@ -1,0 +1,41 @@
+# Web Framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.34.0
+
+# ORM & Database
+sqlalchemy>=2.0.0
+alembic>=1.16.0
+
+# PostgreSQL driver (optional, for production)
+# Uncomment when deploying with PostgreSQL:
+# psycopg2-binary>=2.9.0
+
+# Validation & Settings
+pydantic>=2.11.0
+pydantic-settings>=2.9.0
+
+# File uploads
+python-multipart>=0.0.20
+aiofiles>=24.1.0
+
+# Mistral AI SDK
+mistralai>=1.8.0
+
+# Vector Database for RAG
+chromadb>=1.0.0
+
+# File Processing
+PyPDF2>=3.0.0
+python-docx>=1.1.0
+openpyxl>=3.1.0
+chardet>=5.2.0
+
+# Document Export
+python-pptx>=1.0.0
+reportlab>=4.4.0
+
+# Environment
+python-dotenv>=1.1.0
+
+# Async HTTP (for URL ingestion)
+httpx>=0.28.0
