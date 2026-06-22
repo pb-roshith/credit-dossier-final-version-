@@ -2,9 +2,10 @@
 Pydantic schemas for Deal, Section, AuditEntry, and Version.
 """
 
+import json
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ── Upload (nested — legacy) ───────────────────────────────────
@@ -58,12 +59,25 @@ class SectionResponse(BaseModel):
     order_index: int
     generated_content: Optional[str] = None
     custom_instructions: Optional[str] = None
+    accuracy_score: Optional[float] = None
+    accuracy_details: Optional[dict] = None
     output_template: Optional[str] = None
     template_file_path: Optional[str] = None
     uploads: list[UploadBrief] = []  # Legacy
     document_links: list[SectionDocumentLinkResponse] = []  # New
 
     model_config = {"from_attributes": True}
+
+    @field_validator("accuracy_details", mode="before")
+    @classmethod
+    def parse_accuracy_details(cls, v):
+        """Parse accuracy_details from JSON string (DB storage) to dict."""
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except (json.JSONDecodeError, TypeError):
+                return None
+        return v
 
 
 class SectionUpdate(BaseModel):

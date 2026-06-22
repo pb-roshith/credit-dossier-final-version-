@@ -10,6 +10,7 @@ Implements:
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -161,9 +162,15 @@ Do NOT include a title/heading — the system adds that automatically.
         deal_context: dict[str, Any],
         grounding_data: str | None = None,
         output_template: str | None = None,
-    ) -> str:
+    ) -> dict[str, Any]:
         """
-        Generate narrative content for this section.
+        Generate narrative content for this section and assess accuracy.
+
+        Returns a dict:
+            {
+                "content": str,          # The generated narrative markdown
+                "accuracy": dict | None  # Accuracy assessment or None if no docs
+            }
 
         Uses section-scoped grounding data (extracted text from this section's
         uploads only), not the deal-wide DocumentLibraryTool.
@@ -202,24 +209,166 @@ Do NOT include a title/heading — the system adds that automatically.
             )
 
             msg = response.choices[0].message
+            content = None
             if msg and msg.content:
                 logger.info(f"[{self.section_key}] Successfully generated narrative")
-                return msg.content
+                content = msg.content
 
             # Fallback: retry if empty
-            logger.warning(f"[{self.section_key}] Empty response, retrying…")
-            response = await self.client.chat.complete_async(
-                model=settings.MISTRAL_MODEL,
-                messages=messages,
-                temperature=0.4,
-                max_tokens=4096,
-            )
-            if response.choices[0].message and response.choices[0].message.content:
-                return response.choices[0].message.content
+            if not content:
+                logger.warning(f"[{self.section_key}] Empty response, retrying…")
+                response = await self.client.chat.complete_async(
+                    model=settings.MISTRAL_MODEL,
+                    messages=messages,
+                    temperature=0.4,
+                    max_tokens=4096,
+                )
+                if response.choices[0].message and response.choices[0].message.content:
+                    content = response.choices[0].message.content
 
-            logger.error(f"[{self.section_key}] No content after retry")
-            return f"[Generation failed — model returned no content for {section_title}]"
+            if not content:
+                logger.error(f"[{self.section_key}] No content after retry")
+                return {
+                    "content": f"[Generation failed — model returned no content for {section_title}]",
+                    "accuracy": None,
+                }
+
+            # Assess accuracy against grounding data
+            accuracy = await self._assess_accuracy(
+                content, grounding_data, section_title
+            )
+
+            return {"content": content, "accuracy": accuracy}
 
         except Exception as e:
             logger.error(f"[{self.section_key}] Generation failed: {e}")
             raise
+
+    # ── Accuracy Assessment ─────────────────────────────────────
+
+    async def _assess_accuracy(
+        self,
+        generated_content: str,
+        grounding_data: str | None,
+        section_title: str,
+    ) -> dict[str, Any] | None:
+        """
+        Assess how well the generated narrative is grounded in the source documents.
+
+        Makes a second Mistral call with an evaluator prompt that returns a
+        structured JSON assessment.
+
+        Returns None if no grounding data was provided (nothing to verify against).
+        """
+        if not grounding_data:
+            logger.info(
+                f"[{self.section_key}] No grounding data — skipping accuracy assessment"
+            )
+            return None
+
+        evaluator_prompt = (
+            "You are an accuracy evaluator for AI-generated credit analysis narratives. "
+            "Your job is to compare a generated narrative against the source documents "
+            "and assess how well the narrative is grounded in the provided data.\n\n"
+            "Evaluate the following:\n"
+            "1. **Grounded claims**: Facts, figures, dates, percentages directly found in the source documents\n"
+            "2. **Inferred claims**: Reasonable conclusions drawn from the data (e.g., trend analysis)\n"
+            "3. **Unsupported claims**: Statements that have no basis in the source documents\n\n"
+            "Return ONLY a valid JSON object (no markdown, no explanation outside the JSON) "
+            "with this exact structure:\n"
+            "{\n"
+            '  "score": <integer 0-100>,\n'
+            '  "grounded_claims": <integer>,\n'
+            '  "inferred_claims": <integer>,\n'
+            '  "unsupported_claims": <integer>,\n'
+            '  "summary": "<1-2 sentence explanation>"\n'
+            "}\n\n"
+            "Scoring guide:\n"
+            "- 90-100: Almost all claims directly supported by documents\n"
+            "- 70-89: Most claims supported, some reasonable inferences\n"
+            "- 50-69: Mixed — significant inferences or some unsupported claims\n"
+            "- Below 50: Many unsupported or fabricated claims"
+        )
+
+        # Truncate inputs to avoid exceeding context window
+        max_content_chars = 8_000
+        max_grounding_chars = 20_000
+
+        content_excerpt = generated_content[:max_content_chars]
+        if len(generated_content) > max_content_chars:
+            content_excerpt += "\n\n[... truncated for evaluation ...]"
+
+        grounding_excerpt = grounding_data[:max_grounding_chars]
+        if len(grounding_data) > max_grounding_chars:
+            grounding_excerpt += "\n\n[... truncated for evaluation ...]"
+
+        user_message = (
+            f"## Section: {section_title}\n\n"
+            f"### Generated Narrative:\n{content_excerpt}\n\n"
+            f"### Source Documents:\n{grounding_excerpt}\n\n"
+            "Now evaluate the accuracy. Return ONLY the JSON object."
+        )
+
+        try:
+            response = await self.client.chat.complete_async(
+                model=settings.MISTRAL_MODEL,
+                messages=[
+                    {"role": "system", "content": evaluator_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+                temperature=0.1,
+                max_tokens=512,
+            )
+
+            raw = response.choices[0].message.content or ""
+            raw = raw.strip()
+
+            # Strip markdown code fences if present
+            if raw.startswith("```"):
+                lines = raw.split("\n")
+                # Remove first line (```json or ```) and last line (```)
+                lines = [l for l in lines if not l.strip().startswith("```")]
+                raw = "\n".join(lines).strip()
+
+            result = json.loads(raw)
+
+            # Validate and clamp score
+            score = max(0, min(100, int(result.get("score", 0))))
+            accuracy = {
+                "score": score,
+                "grounded_claims": int(result.get("grounded_claims", 0)),
+                "inferred_claims": int(result.get("inferred_claims", 0)),
+                "unsupported_claims": int(result.get("unsupported_claims", 0)),
+                "summary": str(result.get("summary", "Assessment completed.")),
+            }
+
+            logger.info(
+                f"[{self.section_key}] Accuracy assessment: "
+                f"score={accuracy['score']}%, "
+                f"grounded={accuracy['grounded_claims']}, "
+                f"inferred={accuracy['inferred_claims']}, "
+                f"unsupported={accuracy['unsupported_claims']}"
+            )
+            return accuracy
+
+        except json.JSONDecodeError as e:
+            logger.warning(
+                f"[{self.section_key}] Accuracy evaluator returned invalid JSON: {e}"
+            )
+            return {
+                "score": 0,
+                "grounded_claims": 0,
+                "inferred_claims": 0,
+                "unsupported_claims": 0,
+                "summary": "Accuracy assessment failed — could not parse evaluator response.",
+            }
+        except Exception as e:
+            logger.error(f"[{self.section_key}] Accuracy assessment failed: {e}")
+            return {
+                "score": 0,
+                "grounded_claims": 0,
+                "inferred_claims": 0,
+                "unsupported_claims": 0,
+                "summary": f"Accuracy assessment error: {str(e)}",
+            }
+

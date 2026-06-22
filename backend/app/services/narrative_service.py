@@ -18,6 +18,7 @@ legacy Upload records.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 
@@ -141,7 +142,7 @@ class NarrativeService:
         agent = get_agent(section.section_key)
         deal_ctx = NarrativeService._deal_context(deal)
 
-        content = await agent.generate(
+        result = await agent.generate(
             section_title=section.title,
             section_description=section.description,
             expected_output=section.expected_output,
@@ -151,9 +152,17 @@ class NarrativeService:
             output_template=section.output_template,
         )
 
-        # Update section
-        section.generated_content = content
+        # Update section with content and accuracy
+        section.generated_content = result["content"]
         section.state = "ready"
+
+        accuracy = result.get("accuracy")
+        if accuracy:
+            section.accuracy_score = accuracy["score"]
+            section.accuracy_details = json.dumps(accuracy)
+        else:
+            section.accuracy_score = None
+            section.accuracy_details = None
 
         # Audit entry
         mode = "few-shot" if section.custom_instructions else "zero-shot"
@@ -161,10 +170,11 @@ class NarrativeService:
         doc_count = len(section.document_links) if section.document_links else 0
         legacy_count = len(section.uploads) if section.uploads else 0
         total_docs = doc_count + legacy_count
+        accuracy_tag = f", accuracy={accuracy['score']}%" if accuracy else ""
         audit = AuditEntry(
             deal_id=deal_id,
             action="narrative.generated",
-            subject=f"{section.title} ({mode}{has_template}, {total_docs} docs)",
+            subject=f"{section.title} ({mode}{has_template}, {total_docs} docs{accuracy_tag})",
             user=f"Agent: {agent.__class__.__name__}",
         )
         db.add(audit)
@@ -212,7 +222,7 @@ class NarrativeService:
                 # Get dedicated agent
                 agent = get_agent(section.section_key)
 
-                content = await agent.generate(
+                result = await agent.generate(
                     section_title=section.title,
                     section_description=section.description,
                     expected_output=section.expected_output,
@@ -222,14 +232,16 @@ class NarrativeService:
                     output_template=section.output_template,
                 )
 
+                accuracy = result.get("accuracy")
                 return {
                     "section_id": section.id,
                     "section_key": section.section_key,
                     "title": section.title,
-                    "generated_content": content,
+                    "generated_content": result["content"],
                     "state": "ready",
                     "success": True,
                     "agent": agent.__class__.__name__,
+                    "accuracy": accuracy,
                 }
             except Exception as e:
                 logger.error(f"Failed to draft section {section.section_key}: {e}")
@@ -241,6 +253,7 @@ class NarrativeService:
                     "state": "pending",
                     "success": False,
                     "agent": "N/A",
+                    "accuracy": None,
                 }
 
         # Run all agents in parallel
@@ -254,6 +267,13 @@ class NarrativeService:
                 section.generated_content = result["generated_content"]
                 if result["success"]:
                     section.state = "ready"
+                accuracy = result.get("accuracy")
+                if accuracy:
+                    section.accuracy_score = accuracy["score"]
+                    section.accuracy_details = json.dumps(accuracy)
+                else:
+                    section.accuracy_score = None
+                    section.accuracy_details = None
 
         # Update deal status
         mandatory = [s for s in deal.sections if not s.optional]

@@ -58,12 +58,24 @@ async def generate_narrative(
     )
     if not section:
         raise HTTPException(status_code=404, detail="Deal or section not found")
+
+    # Parse accuracy_details from JSON string if present
+    accuracy_details = None
+    if section.accuracy_details:
+        import json
+        try:
+            accuracy_details = json.loads(section.accuracy_details)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
     return NarrativeResponse(
         section_id=section.id,
         section_key=section.section_key,
         title=section.title,
         generated_content=section.generated_content or "",
         state=section.state,
+        accuracy_score=section.accuracy_score,
+        accuracy_details=accuracy_details,
     )
 
 
@@ -87,6 +99,8 @@ async def draft_all_sections(deal_id: str, db: Session = Depends(get_db)):
                 title=r["title"],
                 generated_content=r["generated_content"],
                 state=r["state"],
+                accuracy_score=r.get("accuracy", {}).get("score") if r.get("accuracy") else None,
+                accuracy_details=r.get("accuracy"),
             )
             for r in results
         ],

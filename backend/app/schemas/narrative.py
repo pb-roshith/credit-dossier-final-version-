@@ -16,6 +16,8 @@ class NarrativeResponse(BaseModel):
     title: str
     generated_content: str
     state: str
+    accuracy_score: Optional[float] = None
+    accuracy_details: Optional[dict] = None
 
 
 class DraftAllResponse(BaseModel):
@@ -24,3 +26,4 @@ class DraftAllResponse(BaseModel):
     total: int
     succeeded: int
     failed: int
+

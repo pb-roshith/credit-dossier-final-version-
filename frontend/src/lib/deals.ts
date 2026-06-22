@@ -48,6 +48,14 @@ export type Section = {
   order_index: number;
   generated_content: string | null;
   custom_instructions: string | null;
+  accuracy_score: number | null;
+  accuracy_details: {
+    score: number;
+    grounded_claims: number;
+    inferred_claims: number;
+    unsupported_claims: number;
+    summary: string;
+  } | null;
   output_template: string | null;
   template_file_path: string | null;
   uploads: UploadBrief[]; // Legacy
@@ -128,6 +136,14 @@ export type NarrativeResponse = {
   title: string;
   generated_content: string;
   state: string;
+  accuracy_score: number | null;
+  accuracy_details: {
+    score: number;
+    grounded_claims: number;
+    inferred_claims: number;
+    unsupported_claims: number;
+    summary: string;
+  } | null;
 };
 
 export type DraftAllResponse = {
