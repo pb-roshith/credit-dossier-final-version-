@@ -248,20 +248,20 @@ class ExportService:
         return buffer.getvalue()
 
     @staticmethod
-    def generate_pptx(deal: Deal) -> bytes:
-        """Generate a basic PPTX pitch book."""
+    async def generate_pptx(deal: Deal) -> bytes:
+        """Generate a well-designed PPTX pitch book using Mistral for formatting."""
         from pptx import Presentation
         from pptx.util import Inches, Pt
         from pptx.dml.color import RGBColor
         from pptx.enum.text import PP_ALIGN
-
-        def _strip_markdown(text: str) -> str:
-            text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
-            text = re.sub(r"\*(.*?)\*", r"\1", text)
-            text = re.sub(r"#{1,6}\s*", "", text)
-            text = re.sub(r"`(.*?)`", r"\1", text)
-            text = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)
-            return text
+        import json
+        import urllib.request
+        import urllib.parse
+        import asyncio
+        import httpx
+        import re
+        from app.services.mistral_library_service import _get_client
+        from app.config import settings
 
         prs = Presentation()
         prs.slide_width = Inches(13.333)
@@ -269,10 +269,16 @@ class ExportService:
 
         p_color = getattr(deal, "primary_color", None) or "#002060"
         s_color = getattr(deal, "secondary_color", None) or "#800020"
+        
+        theme_palette = deal.theme_palette if isinstance(deal.theme_palette, list) else []
+        if not theme_palette:
+            theme_palette = [p_color, s_color, "#64748b", "#94a3b8", "#cbd5e1"]
 
         # Convert hex (e.g. "#002060") to RGBColor
         def hex_to_rgb(hex_str: str) -> RGBColor:
             hex_str = hex_str.lstrip('#')
+            if len(hex_str) != 6:
+                return RGBColor(0, 0, 0)
             return RGBColor(int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16))
 
         primary_rgb = hex_to_rgb(p_color)
@@ -306,32 +312,191 @@ class ExportService:
             if s.state == "ready" and s.generated_content and s.generated_content.strip()
         ]
 
-        for section in valid_sections:
-            slide = prs.slides.add_slide(prs.slide_layouts[6])
-            
-            title_box = slide.shapes.add_textbox(Inches(0.5), Inches(0.3), Inches(12), Inches(0.8))
-            p = title_box.text_frame.paragraphs[0]
-            p.text = section.title
-            p.font.size = Pt(24)
-            p.font.bold = True
-            p.font.color.rgb = primary_rgb
+        client = _get_client()
 
-            content = section.generated_content
-            clean = _strip_markdown(content)
-            if len(clean) > 2000:
-                clean = clean[:2000] + "\n\n[Content truncated — see PDF/DOCX for full text]"
+        system_prompt = """
+        You are an expert presentation designer. Convert the following text into a well-designed presentation format.
+        Return ONLY valid JSON with this exact schema:
+        {
+          "slides": [
+            {
+              "title": "Main point title",
+              "bullet_points": ["Summarized point 1", "Summarized point 2"],
+              "image_prompt": "A keyword or short prompt for an image representing the slide (e.g. 'finance graph', 'factory building', 'corporate team'), or null if no image is needed."
+            }
+          ]
+        }
+        Do not output any markdown code blocks, just the raw JSON.
+        Make it brief and concise, 1-2 slides maximum depending on content length.
+        """
 
-            content_box = slide.shapes.add_textbox(Inches(0.5), Inches(1.2), Inches(12), Inches(5.5))
-            tf = content_box.text_frame
-            tf.word_wrap = True
+        table_pattern = re.compile(r'(^[ \t]*\|[^\n]+\|[ \t]*\n[ \t]*\|[-:| ]+\|[ \t]*\n(?:[ \t]*\|[^\n]+\|[ \t]*(?:\n|$))+)', re.MULTILINE)
+        sem = asyncio.Semaphore(5)
 
-            for line in clean.split("\n"):
-                line = line.strip()
-                if not line:
-                    continue
-                p = tf.add_paragraph()
-                p.text = line
-                p.font.size = Pt(11)
+        async def process_section(section):
+            async with sem:
+                content = section.generated_content
+                charts = []
+                native_tables = []
+                
+                # Extract markdown tables
+                matches = table_pattern.findall(content)
+                for table_str in matches:
+                    df = _parse_table_data(table_str)
+                    if df is not None:
+                        try:
+                            import matplotlib.pyplot as plt
+                            fig, ax = plt.subplots(figsize=(8, 4))
+                            colors = theme_palette if len(theme_palette) >= 5 else (theme_palette + ["#64748b", "#94a3b8", "#cbd5e1", "#334155", "#0f172a"])
+                            bars = df.plot(x=df.columns[0], kind='bar', ax=ax, rot=45, color=colors[:len(df.columns)-1])
+                            for container in ax.containers:
+                                ax.bar_label(container, fmt='%.1f', padding=3, color='#334155', fontsize=8, fontweight='bold')
+                            ax.spines['top'].set_visible(False)
+                            ax.spines['right'].set_visible(False)
+                            ax.spines['left'].set_visible(False)
+                            ax.set_xlabel("")
+                            ax.set_yticks([])
+                            plt.tight_layout()
+                            buf = io.BytesIO()
+                            fig.savefig(buf, format='png', dpi=300, transparent=True)
+                            plt.close(fig)
+                            charts.append(buf.getvalue())
+                        except Exception as e:
+                            logger.error(f"Failed to generate PPT chart: {e}")
+                    else:
+                        lines = table_str.strip().split('\n')
+                        if len(lines) >= 3:
+                            headers = [col.strip() for col in lines[0].split('|')[1:-1]]
+                            rows = []
+                            for line in lines[2:]:
+                                cols = [col.strip() for col in line.split('|')[1:-1]]
+                                if len(cols) == len(headers):
+                                    rows.append(cols)
+                            if rows:
+                                native_tables.append((headers, rows))
+                
+                try:
+                    response = await client.chat.complete_async(
+                        model=settings.MISTRAL_MODEL,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": f"Section: {section.title}\n\nContent:\n{content}"}
+                        ],
+                        temperature=0.2,
+                        response_format={"type": "json_object"}
+                    )
+                    
+                    raw = response.choices[0].message.content or "{}"
+                    if raw.startswith("```"):
+                        lines = raw.split("\n")
+                        lines = [l for l in lines if not l.strip().startswith("```")]
+                        raw = "\n".join(lines).strip()
+                    
+                    slide_data = json.loads(raw)
+                    slides_list = slide_data.get("slides", [])
+                    
+                except Exception as e:
+                    logger.error(f"Failed to generate slides for {section.title}: {e}")
+                    slides_list = [{
+                        "title": section.title,
+                        "bullet_points": [content[:500] + "..."],
+                        "image_prompt": None
+                    }]
+
+                # Allocate generated charts to slides instead of fetching AI images
+                for i, slide_info in enumerate(slides_list):
+                    slide_info["img_bytes"] = None
+                    if i < len(charts):
+                        slide_info["img_bytes"] = charts[i]
+                        slide_info["image_prompt"] = None
+
+                # Fetch AI images only if no chart was assigned
+                async with httpx.AsyncClient(timeout=15.0) as http_client:
+                    for slide_info in slides_list:
+                        if slide_info["img_bytes"] is not None:
+                            continue
+                        img_prompt = slide_info.get("image_prompt")
+                        if img_prompt and str(img_prompt).lower() not in ["null", "none"]:
+                            try:
+                                safe_prompt = urllib.parse.quote(str(img_prompt))
+                                img_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=400&height=300&nologo=true"
+                                resp = await http_client.get(img_url, headers={'User-Agent': 'Mozilla/5.0'})
+                                if resp.status_code == 200:
+                                    slide_info["img_bytes"] = resp.content
+                            except Exception as e:
+                                logger.warning(f"Failed to fetch image for prompt '{img_prompt}': {e}")
+                                
+                return section, slides_list, native_tables
+
+        tasks = [process_section(sec) for sec in valid_sections]
+        results = await asyncio.gather(*tasks)
+
+        for section, slides_list, native_tables in results:
+            for slide_info in slides_list:
+                slide = prs.slides.add_slide(prs.slide_layouts[1])
+                title_shape = slide.shapes.title
+                body_shape = slide.placeholders[1]
+
+                title_shape.text = slide_info.get("title", section.title)
+                title_shape.text_frame.paragraphs[0].font.color.rgb = primary_rgb
+                
+                tf = body_shape.text_frame
+                tf.clear() # Clear default formatting safely
+                
+                for idx, point in enumerate(slide_info.get("bullet_points", [])):
+                    if idx == 0:
+                        p = tf.paragraphs[0]
+                    else:
+                        p = tf.add_paragraph()
+                    p.text = str(point)
+                    p.font.size = Pt(16)
+                    p.font.color.rgb = RGBColor(0x33, 0x33, 0x33) # Dark Gray, not white
+                    p.level = 0
+                    p.space_after = Pt(10)
+                
+                img_bytes = slide_info.get("img_bytes")
+                if img_bytes:
+                    try:
+                        img_stream = io.BytesIO(img_bytes)
+                        slide.shapes.add_picture(img_stream, Inches(7.5), Inches(2.0), width=Inches(5.0))
+                        body_shape.width = Inches(6.5)
+                    except Exception as e:
+                        logger.warning(f"Failed to embed image: {e}")
+
+            for headers, rows in native_tables:
+                slide = prs.slides.add_slide(prs.slide_layouts[1])
+                slide.shapes.title.text = f"{section.title} - Data"
+                slide.shapes.title.text_frame.paragraphs[0].font.color.rgb = primary_rgb
+                
+                sp = slide.placeholders[1]._element
+                sp.getparent().remove(sp)
+                
+                rows_cnt = len(rows) + 1
+                cols_cnt = len(headers)
+                left = Inches(1.0)
+                top = Inches(2.0)
+                width = Inches(11.0)
+                height = Inches(0.5 * rows_cnt)
+                
+                table_shape = slide.shapes.add_table(rows_cnt, cols_cnt, left, top, width, height)
+                table = table_shape.table
+                
+                for col_idx, header in enumerate(headers):
+                    if col_idx >= cols_cnt: break
+                    cell = table.cell(0, col_idx)
+                    cell.text = header
+                    cell.text_frame.paragraphs[0].font.bold = True
+                    cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                    cell.fill.solid()
+                    cell.fill.fore_color.rgb = primary_rgb
+                    
+                for row_idx, row_data in enumerate(rows):
+                    for col_idx, cell_data in enumerate(row_data):
+                        if col_idx < cols_cnt:
+                            cell = table.cell(row_idx + 1, col_idx)
+                            cell.text = str(cell_data)
+                            cell.text_frame.paragraphs[0].font.size = Pt(12)
+                            cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(0x33, 0x33, 0x33)
 
         buffer = io.BytesIO()
         prs.save(buffer)

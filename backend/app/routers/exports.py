@@ -34,8 +34,10 @@ FORMAT_CONFIG = {
 }
 
 
+import inspect
+
 @router.post("/export/{format}")
-def export_deal(deal_id: str, format: str, db: Session = Depends(get_db)):
+async def export_deal(deal_id: str, format: str, db: Session = Depends(get_db)):
     """
     Export the deal as PPT, PDF, or DOCX.
     Returns a downloadable file.
@@ -52,7 +54,10 @@ def export_deal(deal_id: str, format: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Deal not found")
 
     config = FORMAT_CONFIG[format]
-    file_bytes = config["method"](deal)
+    if inspect.iscoroutinefunction(config["method"]):
+        file_bytes = await config["method"](deal)
+    else:
+        file_bytes = config["method"](deal)
 
     # Audit entry
     audit = AuditEntry(
