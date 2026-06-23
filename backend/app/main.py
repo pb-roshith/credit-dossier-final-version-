@@ -31,17 +31,28 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Create database tables on startup."""
+    """Create database tables on startup and initialize global agents."""
     logger.info("Creating database tables…")
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables ready.")
 
-    # Seeding disabled — start with empty database
-    # from app.seed import seed_if_empty
-    # seed_if_empty()
+    from app.database import SessionLocal
+    from app.services.mistral_library_service import MistralLibraryService
+
+    db = SessionLocal()
+    try:
+        await MistralLibraryService.initialize_global_agents(db)
+    finally:
+        db.close()
 
     yield
-    logger.info("Shutting down.")
+    logger.info("Shutting down. Cleaning up global agents...")
+    
+    db = SessionLocal()
+    try:
+        await MistralLibraryService.cleanup_global_agents(db)
+    finally:
+        db.close()
 
 
 app = FastAPI(

@@ -7,7 +7,7 @@ import {
   ShieldCheck, AlertTriangle, ChevronDown, ChevronUp, Info, Library
 } from "lucide-react";
 import { api, formatAmount, type Deal, type Section } from "@/lib/deals";
-import ReactMarkdown from "react-markdown";
+
 
 export const Route = createFileRoute("/deals/$dealId")({
   head: () => ({ meta: [{ title: "Deal — Credit Pitch Book" }] }),
@@ -190,6 +190,9 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [uploadingTemplate, setUploadingTemplate] = useState(false);
   const [showTemplatePreview, setShowTemplatePreview] = useState(false);
+  const [editingContent, setEditingContent] = useState(false);
+  const [editedContent, setEditedContent] = useState("");
+  const [savingContent, setSavingContent] = useState(false);
 
   // Library document upload state
   const [showLibUpload, setShowLibUpload] = useState(false);
@@ -206,6 +209,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       setCustomInstructions(active.custom_instructions || "");
       setOutputTemplate(active.output_template || "");
       setShowTemplatePreview(false);
+      setEditingContent(false);
     }
   }, [activeId, active]);
 
@@ -322,6 +326,20 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
     }
   };
 
+  const handleSaveContent = async () => {
+    if (!active || savingContent) return;
+    setSavingContent(true);
+    try {
+      await api.sections.update(deal.id, active.id, { generated_content: editedContent });
+      refresh();
+      setEditingContent(false);
+    } catch (err) {
+      console.error("Save content failed:", err);
+    } finally {
+      setSavingContent(false);
+    }
+  };
+
   if (!active) return null;
 
   const readySections = deal.sections.filter(s => s.state === "ready").length;
@@ -332,7 +350,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const libDocCount = deal.library_files?.length || 0;
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+    <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
       {/* ── Left Panel: Section List ── */}
       <div className="space-y-3">
         {/* Draft All Card */}
@@ -766,14 +784,39 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                 </span>
               )}
             </span>
-            <button
-              onClick={handleGenerate}
-              disabled={generating}
-              className="inline-flex h-7 items-center gap-1 rounded-md border border-primary-foreground/30 bg-primary-foreground/10 px-2 text-xs font-medium disabled:opacity-60 hover:bg-primary-foreground/20 transition-colors"
-            >
-              {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              {generating ? "Generating…" : "Generate"}
-            </button>
+            <div className="flex items-center gap-2">
+              {active.generated_content && !editingContent && (
+                <button
+                  onClick={() => {
+                    setEditedContent(active.generated_content || "");
+                    setEditingContent(true);
+                  }}
+                  disabled={generating}
+                  className="inline-flex h-7 items-center gap-1 rounded-md border border-primary-foreground/30 bg-primary-foreground/10 px-2 text-xs font-medium disabled:opacity-60 hover:bg-primary-foreground/20 transition-colors"
+                >
+                  <Type className="h-3.5 w-3.5" />
+                  Edit
+                </button>
+              )}
+              {editingContent && (
+                <button
+                  onClick={() => setEditingContent(false)}
+                  disabled={savingContent}
+                  className="inline-flex h-7 items-center gap-1 rounded-md border border-primary-foreground/30 bg-transparent px-2 text-xs font-medium text-primary-foreground disabled:opacity-60 hover:bg-primary-foreground/10 transition-colors"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Cancel
+                </button>
+              )}
+              <button
+                onClick={handleGenerate}
+                disabled={generating || editingContent}
+                className="inline-flex h-7 items-center gap-1 rounded-md border border-primary-foreground/30 bg-primary-foreground/10 px-2 text-xs font-medium disabled:opacity-60 hover:bg-primary-foreground/20 transition-colors"
+              >
+                {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                {generating ? "Generating…" : "Generate"}
+              </button>
+            </div>
           </div>
 
           {active.generated_content ? (
@@ -804,7 +847,28 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               <AccuracyPanel section={active} />
               {/* Rendered markdown content */}
               <div className="narrative-prose px-6 py-5">
-                <MarkdownRenderer content={active.generated_content} primaryColor={deal.primary_color} secondaryColor={deal.secondary_color} />
+                {editingContent ? (
+                  <div className="space-y-3">
+                    <textarea
+                      value={editedContent}
+                      onChange={e => setEditedContent(e.target.value)}
+                      rows={15}
+                      className="w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm font-mono focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={handleSaveContent}
+                        disabled={savingContent}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-md bg-emerald-600 px-3 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-60 transition-colors"
+                      >
+                        {savingContent ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                        Save Changes
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <MarkdownRenderer content={active.generated_content} primaryColor={deal.primary_color} secondaryColor={deal.secondary_color} />
+                )}
               </div>
             </div>
           ) : (
@@ -1050,7 +1114,7 @@ function extractText(node: any): string {
   return "";
 }
 
-function CustomTable({ children, primaryColor, secondaryColor, ...props }: any) {
+function CustomTable({ children, primaryColor, secondaryColor, node, ...props }: any) {
   const [viewMode, setViewMode] = useState<"table" | "chart">("table");
 
   // Parse the table data from the React children
@@ -1060,21 +1124,22 @@ function CustomTable({ children, primaryColor, secondaryColor, ...props }: any) 
       const rows: any[] = [];
       
       const childrenArray = React.Children.toArray(children);
-      const thead: any = childrenArray.find((c: any) => c.type === "thead");
-      const tbody: any = childrenArray.find((c: any) => c.type === "tbody");
+      const thead: any = childrenArray.find((c: any) => React.isValidElement(c) && c.type === "thead");
+      const tbody: any = childrenArray.find((c: any) => React.isValidElement(c) && c.type === "tbody");
 
-      if (thead) {
-        const tr = React.Children.toArray(thead.props.children)[0] as any;
-        if (tr && tr.props.children) {
+      if (thead && thead.props && thead.props.children) {
+        const trs = React.Children.toArray(thead.props.children);
+        const tr = trs.find((c: any) => React.isValidElement(c) && c.type === "tr") as any;
+        if (tr && tr.props && tr.props.children) {
           React.Children.forEach(tr.props.children, (th: any) => {
             headers.push(extractText(th).trim());
           });
         }
       }
 
-      if (tbody) {
+      if (tbody && tbody.props && tbody.props.children) {
         React.Children.forEach(tbody.props.children, (tr: any) => {
-          if (tr.type !== "tr") return;
+          if (!React.isValidElement(tr) || tr.type !== "tr" || !tr.props) return;
           const rowData: any = {};
           React.Children.forEach(tr.props.children, (td: any, idx: number) => {
             const valStr = extractText(td).trim();

@@ -56,14 +56,9 @@ class NarrativeService:
             section.custom_instructions = custom_instructions
 
         # Ensure agent exists for this section
-        agent_id = MistralLibraryService.get_agent_id(db, deal_id, section.section_key)
+        agent_id = MistralLibraryService.get_global_agent_id(db, section.section_key)
         if not agent_id:
-            agent_id = await MistralLibraryService.create_section_agent(
-                db=db,
-                deal=deal,
-                section_key=section.section_key,
-                section_title=section.title,
-            )
+            raise ValueError(f"Global agent for {section.section_key} not initialized")
 
         # Generate via Mistral Agent (RAG handled by document_library tool)
         content = await MistralLibraryService.generate_with_agent(
@@ -71,6 +66,7 @@ class NarrativeService:
             section_title=section.title,
             section_description=section.description,
             expected_output=section.expected_output,
+            deal=deal,
             custom_instructions=section.custom_instructions,
             output_template=section.output_template,
         )
@@ -135,25 +131,23 @@ class NarrativeService:
         if not deal:
             return []
 
-        # Ensure all agents exist
-        await MistralLibraryService.create_all_agents(db, deal)
-
         has_docs = len(deal.library_files) > 0
 
         async def _generate_one(section: Section) -> dict:
             """Generate narrative for one section (runs as async task)."""
             try:
-                agent_id = MistralLibraryService.get_agent_id(
-                    db, deal_id, section.section_key
+                agent_id = MistralLibraryService.get_global_agent_id(
+                    db, section.section_key
                 )
                 if not agent_id:
-                    raise ValueError(f"No agent found for {section.section_key}")
+                    raise ValueError(f"No global agent found for {section.section_key}")
 
                 content = await MistralLibraryService.generate_with_agent(
                     agent_id=agent_id,
                     section_title=section.title,
                     section_description=section.description,
                     expected_output=section.expected_output,
+                    deal=deal,
                     custom_instructions=section.custom_instructions,
                     output_template=section.output_template,
                 )
@@ -187,8 +181,15 @@ class NarrativeService:
                     "accuracy": None,
                 }
 
-        # Run all agents in parallel
-        tasks = [_generate_one(section) for section in deal.sections]
+        # Limit concurrency to 2 to avoid Mistral rate limits
+        semaphore = asyncio.Semaphore(2)
+
+        async def _generate_one_with_semaphore(section: Section) -> dict:
+            async with semaphore:
+                return await _generate_one(section)
+
+        # Run all agents with limited concurrency
+        tasks = [_generate_one_with_semaphore(section) for section in deal.sections]
         results = await asyncio.gather(*tasks)
 
         # Update all sections in DB

@@ -157,34 +157,100 @@ class MistralLibraryService:
     # ── Agent Management ───────────────────────────────────────────
 
     @staticmethod
-    async def create_section_agent(
-        db: Session,
-        deal: Deal,
-        section_key: str,
+    async def initialize_global_agents(db: Session) -> None:
+        """Create the 16 global agents on startup if they don't exist."""
+        client = _get_client()
+        from app.services.deal_service import DEFAULT_SECTIONS
+
+        logger.info("Initializing global Mistral agents...")
+        for sec_def in DEFAULT_SECTIONS:
+            section_key = sec_def["section_key"]
+            section_title = sec_def["title"]
+
+            existing = db.query(MistralAgent).filter(MistralAgent.section_key == section_key).first()
+            if existing:
+                continue
+
+            instructions = get_instructions(section_key)
+            agent = await client.beta.agents.create_async(
+                model=settings.MISTRAL_AGENT_MODEL,
+                name=f"GlobalAgent_{section_title}",
+                instructions=instructions,
+                completion_args={"temperature": 0.1},
+            )
+            
+            ma = MistralAgent(section_key=section_key, agent_id=agent.id)
+            db.add(ma)
+        
+        db.commit()
+        logger.info("Global Mistral agents initialized.")
+
+    @staticmethod
+    async def cleanup_global_agents(db: Session) -> None:
+        """Delete all global Mistral agents on shutdown."""
+        client = _get_client()
+        agents = db.query(MistralAgent).all()
+        logger.info(f"Cleaning up {len(agents)} global Mistral agents...")
+        
+        for ma in agents:
+            try:
+                await client.beta.agents.delete_async(agent_id=ma.agent_id)
+            except Exception as e:
+                logger.warning(f"Failed to delete global agent {ma.agent_id}: {e}")
+            db.delete(ma)
+            
+        db.commit()
+        logger.info("Global Mistral agents cleaned up.")
+
+    @staticmethod
+    async def sync_agents_to_library(db: Session, library_id: str | None) -> None:
+        """Sync all global agents to use the given library_id (or none)."""
+        if not library_id:
+            return
+
+        client = _get_client()
+        agents = db.query(MistralAgent).all()
+        
+        logger.info(f"Syncing {len(agents)} global agents to library {library_id}...")
+
+        async def _update_one(ma: MistralAgent):
+            try:
+                await client.beta.agents.update_async(
+                    agent_id=ma.agent_id,
+                    tools=[{"type": "document_library", "library_ids": [library_id]}]
+                )
+            except Exception as e:
+                logger.error(f"Failed to sync agent {ma.agent_id} to library {library_id}: {e}")
+
+        import asyncio
+        await asyncio.gather(*[_update_one(ma) for ma in agents])
+        logger.info(f"Successfully synced global agents to library {library_id}.")
+
+    @staticmethod
+    def get_global_agent_id(db: Session, section_key: str) -> str | None:
+        ma = db.query(MistralAgent).filter(MistralAgent.section_key == section_key).first()
+        return ma.agent_id if ma else None
+
+    # ── Agent-Based Generation ─────────────────────────────────────
+
+    @staticmethod
+    async def generate_with_agent(
+        agent_id: str,
         section_title: str,
+        section_description: str,
+        expected_output: str,
+        deal: Deal,
+        custom_instructions: str | None = None,
+        output_template: str | None = None,
     ) -> str:
         """
-        Create a Mistral Agent for a specific section with document_library tool.
-        Returns the agent_id.
+        Generate narrative content using a Mistral Agent.
+        The agent has document_library tool access for RAG.
+
+        Returns the generated content string.
         """
         client = _get_client()
-
-        # Check if agent already exists
-        existing = (
-            db.query(MistralAgent)
-            .filter(
-                MistralAgent.deal_id == deal.id,
-                MistralAgent.section_key == section_key,
-            )
-            .first()
-        )
-        if existing:
-            return existing.agent_id
-
-        # Get section-specific instructions
-        instructions = get_instructions(section_key)
-
-        # Build deal context into instructions
+        
         deal_ctx = (
             f"\n\n--- Deal Context ---\n"
             f"Customer: {deal.customer}\n"
@@ -203,114 +269,9 @@ class MistralLibraryService:
             f"---"
         )
 
-        full_instructions = instructions + deal_ctx
-
-        # Build tools list
-        tools = []
-        if deal.mistral_library_id:
-            tools.append({
-                "type": "document_library",
-                "library_ids": [deal.mistral_library_id],
-            })
-
-        # Create agent
-        agent = await client.beta.agents.create_async(
-            model=settings.MISTRAL_AGENT_MODEL,
-            name=f"{section_title} — {deal.customer}",
-            instructions=full_instructions,
-            tools=tools,
-            completion_args={"temperature": 0.1},
-        )
-
-        # Store agent ID
-        ma = MistralAgent(
-            deal_id=deal.id,
-            section_key=section_key,
-            agent_id=agent.id,
-        )
-        db.add(ma)
-        db.commit()
-
-        logger.info(
-            f"Created Mistral Agent {agent.id} for {section_key} "
-            f"in deal {deal.id}"
-        )
-        return agent.id
-
-    @staticmethod
-    async def create_all_agents(db: Session, deal: Deal) -> dict[str, str]:
-        """
-        Create all 16 section agents for a deal.
-        Returns {section_key: agent_id} mapping.
-        """
-        from app.services.deal_service import DEFAULT_SECTIONS
-
-        agents = {}
-        for sec_def in DEFAULT_SECTIONS:
-            agent_id = await MistralLibraryService.create_section_agent(
-                db=db,
-                deal=deal,
-                section_key=sec_def["section_key"],
-                section_title=sec_def["title"],
-            )
-            agents[sec_def["section_key"]] = agent_id
-
-        logger.info(f"Created {len(agents)} agents for deal {deal.id}")
-        return agents
-
-    @staticmethod
-    async def delete_all_agents(db: Session, deal_id: str) -> None:
-        """Delete all Mistral agents for a deal."""
-        client = _get_client()
-        agents = (
-            db.query(MistralAgent)
-            .filter(MistralAgent.deal_id == deal_id)
-            .all()
-        )
-        for ma in agents:
-            try:
-                await client.beta.agents.delete_async(agent_id=ma.agent_id)
-            except Exception as e:
-                logger.warning(f"Failed to delete agent {ma.agent_id}: {e}")
-            db.delete(ma)
-
-        db.commit()
-        logger.info(f"Deleted {len(agents)} agents for deal {deal_id}")
-
-    @staticmethod
-    def get_agent_id(db: Session, deal_id: str, section_key: str) -> str | None:
-        """Look up the Mistral agent ID for a deal + section."""
-        ma = (
-            db.query(MistralAgent)
-            .filter(
-                MistralAgent.deal_id == deal_id,
-                MistralAgent.section_key == section_key,
-            )
-            .first()
-        )
-        return ma.agent_id if ma else None
-
-    # ── Agent-Based Generation ─────────────────────────────────────
-
-    @staticmethod
-    async def generate_with_agent(
-        agent_id: str,
-        section_title: str,
-        section_description: str,
-        expected_output: str,
-        custom_instructions: str | None = None,
-        output_template: str | None = None,
-    ) -> str:
-        """
-        Generate narrative content using a Mistral Agent.
-        The agent has document_library tool access for RAG.
-
-        Returns the generated content string.
-        """
-        client = _get_client()
-
         # Build the user message
         user_parts = [
+            deal_ctx,
             f"Section: {section_title}",
             f"Description: {section_description}",
             f"Expected Output: {expected_output}",
@@ -376,6 +337,12 @@ class MistralLibraryService:
             content = re.sub(r'^Searching\s*\[.*?\].*?(?=\n\n|\n#|\n\*\*|$)', '', content, flags=re.IGNORECASE|re.DOTALL)
             # Remove "Here is the [xyz] section..." lines at the start
             content = re.sub(r'^\s*Here is the.*?based on the available documents:?\s*\n*', '', content, flags=re.IGNORECASE)
+            
+            content = content.strip()
+            
+            # Strip markdown fences if the agent wrapped the entire response in them
+            content = re.sub(r'^```(?:markdown)?\s*\n', '', content, flags=re.IGNORECASE)
+            content = re.sub(r'\n```\s*$', '', content)
             
             content = content.strip()
 

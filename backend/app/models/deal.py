@@ -71,9 +71,7 @@ class Deal(Base):
     versions: Mapped[list["Version"]] = relationship(
         back_populates="deal", cascade="all, delete-orphan", order_by="Version.created_at"
     )
-    mistral_agents: Mapped[list["MistralAgent"]] = relationship(  # type: ignore[name-defined]
-        back_populates="deal", cascade="all, delete-orphan",
-    )
+
     library_files: Mapped[list["LibraryFile"]] = relationship(  # type: ignore[name-defined]
         back_populates="deal", cascade="all, delete-orphan", order_by="LibraryFile.created_at",
     )

@@ -97,6 +97,7 @@ class SectionUpdate(BaseModel):
     expected_output: Optional[str] = None
     custom_instructions: Optional[str] = None
     output_template: Optional[str] = None
+    generated_content: Optional[str] = None
     state: Optional[str] = None
 
 

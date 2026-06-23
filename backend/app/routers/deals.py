@@ -2,7 +2,7 @@
 Deals API router — CRUD operations for deals.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, BackgroundTasks
 from sqlalchemy.orm import Session
 import pypdf
 import io
@@ -13,6 +13,7 @@ from app.schemas.deal import (
     DealCreate, DealUpdate, DealResponse, DealListResponse,
 )
 from app.services.deal_service import DealService
+from app.services.mistral_library_service import MistralLibraryService
 
 router = APIRouter(prefix="/api/deals", tags=["deals"])
 
@@ -59,18 +60,25 @@ def list_deals(
 
 
 @router.get("/{deal_id}", response_model=DealResponse)
-def get_deal(deal_id: str, db: Session = Depends(get_db)):
+def get_deal(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Get a single deal with all sections, audit entries, and versions."""
     deal = DealService.get_deal(db, deal_id)
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
+        
+    # Sync global agents to this deal's library in the background
+    background_tasks.add_task(MistralLibraryService.sync_agents_to_library, db, deal.mistral_library_id)
+        
     return deal
 
 
 @router.post("", response_model=DealResponse, status_code=201)
-def create_deal(data: DealCreate, db: Session = Depends(get_db)):
+def create_deal(data: DealCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Create a new deal with 16 default sections."""
     deal = DealService.create_deal(db, data.model_dump())
+    
+    background_tasks.add_task(MistralLibraryService.sync_agents_to_library, db, deal.mistral_library_id)
+    
     # Re-fetch with full relations
     full_deal = DealService.get_deal(db, deal.id)
     return full_deal
