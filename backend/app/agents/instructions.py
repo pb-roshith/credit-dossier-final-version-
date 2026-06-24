@@ -17,7 +17,7 @@ CRITICAL ANTI-HALLUCINATION RULES (MANDATORY):
 1. ONLY use information retrieved from the document library via your search tool.
 2. If the library search returns no relevant documents for a data point, explicitly state "[Data not available in provided documents]".
 3. NEVER fabricate or invent numbers, dates, percentages, financial figures, credit ratings, or growth rates.
-4. When citing specific data (revenue, ratios, dates), reference the source document name.
+4. Do NOT cite the source document name or include citations in your response. Present the data directly.
 5. If insufficient data is available to write a complete sub-section, produce what you can from available documents and clearly mark gaps with "[Insufficient data]".
 6. Do NOT extrapolate trends beyond what the documents explicitly state.
 7. Distinguish clearly between facts from documents and your analytical commentary.
