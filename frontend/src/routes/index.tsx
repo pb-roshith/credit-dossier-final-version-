@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
 import {
-  Plus, Briefcase, Clock, TriangleAlert, CircleCheck, FileText, Search, ArrowRight, Loader2,
+  Plus, Briefcase, Clock, TriangleAlert, CircleCheck, FileText, Search, ArrowRight, Loader2, Trash2, AlertTriangle,
 } from "lucide-react";
 import { api, formatAmount, type Status, type DealType, type DealListItem } from "@/lib/deals";
 
@@ -35,23 +35,40 @@ function Dashboard() {
   const [deals, setDeals] = useState<DealListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [dealToDelete, setDealToDelete] = useState<DealListItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  const fetchDeals = () => {
     setLoading(true);
     setError(null);
-
     const statusParam = statusFilter !== "all"
       ? statusFilter.replace("_", " ").replace(/\b\w/g, l => l.toUpperCase())
       : undefined;
 
     api.deals.list({ status: statusParam, search: q || undefined })
-      .then(data => { if (!cancelled) setDeals(data); })
-      .catch(err => { if (!cancelled) setError(err.message); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+      .then(setDeals)
+      .catch(err => setError(err.message))
+      .finally(() => setLoading(false));
+  };
 
-    return () => { cancelled = true; };
+  useEffect(() => {
+    fetchDeals();
   }, [q, statusFilter]);
+
+  const handleDelete = async () => {
+    if (!dealToDelete || deleting) return;
+    setDeleting(true);
+    try {
+      await api.deals.delete(dealToDelete.id);
+      setDealToDelete(null);
+      fetchDeals();
+    } catch (err) {
+      console.error("Delete failed:", err);
+      alert("Failed to delete deal.");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const all = deals;
   const kpis = [
@@ -155,9 +172,18 @@ function Dashboard() {
                         <div className="mt-1 text-[11px] text-muted-foreground">{d.sections_ready}/{d.sections_total} sections</div>
                       </td>
                       <td>
-                        <Link to="/deals/$dealId" params={{ dealId: d.id }} className="inline-flex h-8 items-center justify-center gap-2 rounded-md px-3 text-xs font-medium hover:bg-accent hover:text-accent-foreground">
-                          Open <ArrowRight className="h-3.5 w-3.5" />
-                        </Link>
+                        <div className="flex items-center gap-2">
+                          <Link to="/deals/$dealId" params={{ dealId: d.id }} className="inline-flex h-8 items-center justify-center gap-2 rounded-md px-3 text-xs font-medium hover:bg-accent hover:text-accent-foreground">
+                            Open <ArrowRight className="h-3.5 w-3.5" />
+                          </Link>
+                          <button
+                            onClick={() => setDealToDelete(d)}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                            title="Delete Deal"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -177,7 +203,15 @@ function Dashboard() {
                         <div className="truncate font-semibold">{d.customer}</div>
                         <div className="truncate text-xs text-muted-foreground">{d.sector}</div>
                       </div>
-                      <StatusBadge status={d.status} />
+                      <div className="flex items-center gap-2">
+                        <StatusBadge status={d.status} />
+                        <button
+                          onClick={(e) => { e.preventDefault(); setDealToDelete(d); }}
+                          className="text-muted-foreground hover:text-destructive p-1"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
                     <div className="mt-2 flex items-center justify-between text-xs">
                       <span className="text-muted-foreground">{d.facility}</span>
@@ -196,6 +230,37 @@ function Dashboard() {
           </>
         )}
       </div>
+
+      {dealToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-lg bg-background p-6 shadow-lg border">
+            <div className="flex items-center gap-3 text-destructive mb-4">
+              <AlertTriangle className="h-6 w-6" />
+              <h2 className="text-lg font-semibold">Delete Deal</h2>
+            </div>
+            <p className="text-sm text-muted-foreground mb-6">
+              Are you sure you want to delete the deal for <strong>{dealToDelete.customer}</strong>? This action cannot be undone and will also delete the associated document library.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setDealToDelete(null)}
+                disabled={deleting}
+                className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-muted transition-colors disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="inline-flex items-center gap-2 rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-60"
+              >
+                {deleting && <Loader2 className="h-4 w-4 animate-spin" />}
+                {deleting ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

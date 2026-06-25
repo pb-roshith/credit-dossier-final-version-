@@ -133,7 +133,16 @@ async def extract_theme_from_document(deal_id: str, file: UploadFile = File(...)
 
 
 @router.delete("/{deal_id}", status_code=204)
-def delete_deal(deal_id: str, db: Session = Depends(get_db)):
-    """Delete a deal and all related data."""
+def delete_deal(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Delete a deal and all related data, including the Mistral library."""
+    deal = DealService.get_deal(db, deal_id)
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+        
+    library_id = deal.mistral_library_id
+    
     if not DealService.delete_deal(db, deal_id):
         raise HTTPException(status_code=404, detail="Deal not found")
+        
+    if library_id:
+        background_tasks.add_task(MistralLibraryService.delete_library, library_id)

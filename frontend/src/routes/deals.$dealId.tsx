@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, useCallback } from "react";
 import {
   ArrowLeft, FileText, Clock, Download, Sparkles, RefreshCw, Plus, TriangleAlert,
@@ -18,10 +18,13 @@ type Tab = "overview" | "narratives" | "versions" | "export";
 
 function DealDetail() {
   const { dealId } = Route.useParams();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>("overview");
   const [deal, setDeal] = useState<Deal | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchDeal = useCallback((isRefresh = false) => {
     if (!isRefresh) setLoading(true);
@@ -82,8 +85,57 @@ function DealDetail() {
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Facility</div>
           <div className="font-mono text-xl font-bold">{formatAmount(deal.amount, deal.currency)}</div>
           <div className="text-xs text-muted-foreground">{deal.tenure}M · {deal.pricing}</div>
+          <button
+            onClick={() => setShowDeleteModal(true)}
+            className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-md border border-destructive/30 bg-destructive/10 px-2.5 text-[11px] font-medium text-destructive hover:bg-destructive/20 transition-colors"
+          >
+            <Trash2 className="h-3 w-3" />
+            Delete Deal
+          </button>
         </div>
       </div>
+
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-lg bg-background p-6 shadow-lg border">
+            <div className="flex items-center gap-3 text-destructive mb-4">
+              <AlertTriangle className="h-6 w-6" />
+              <h2 className="text-lg font-semibold">Delete Deal</h2>
+            </div>
+            <p className="text-sm text-muted-foreground mb-6">
+              Are you sure you want to delete the deal for <strong>{deal.customer}</strong>? This action cannot be undone and will also delete the associated document library.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                disabled={deleting}
+                className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-muted transition-colors disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setDeleting(true);
+                  try {
+                    await api.deals.delete(deal.id);
+                    navigate({ to: "/" });
+                  } catch (err) {
+                    console.error("Delete failed:", err);
+                    alert("Failed to delete deal.");
+                  } finally {
+                    setDeleting(false);
+                  }
+                }}
+                disabled={deleting}
+                className="inline-flex items-center gap-2 rounded-md bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-60"
+              >
+                {deleting && <Loader2 className="h-4 w-4 animate-spin" />}
+                {deleting ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="mb-6 flex flex-wrap gap-1 border-b">
         {tabs.map(({ id, label, Icon }) => (
@@ -193,6 +245,8 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const [editingContent, setEditingContent] = useState(false);
   const [editedContent, setEditedContent] = useState("");
   const [savingContent, setSavingContent] = useState(false);
+  const [selectedSectionIds, setSelectedSectionIds] = useState<Set<string>>(new Set());
+  const [draftingSelected, setDraftingSelected] = useState(false);
 
   // Library document upload state
   const [showLibUpload, setShowLibUpload] = useState(false);
@@ -227,7 +281,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   };
 
   const handleDraftAll = async () => {
-    if (draftingAll) return;
+    if (draftingAll || draftingSelected) return;
     setDraftingAll(true);
     try {
       await api.sections.generateAll(deal.id);
@@ -236,6 +290,22 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       console.error("Draft all failed:", err);
     } finally {
       setDraftingAll(false);
+    }
+  };
+
+  const handleDraftSelected = async () => {
+    if (draftingAll || draftingSelected || selectedSectionIds.size === 0) return;
+    setDraftingSelected(true);
+    try {
+      const promises = Array.from(selectedSectionIds).map(sectionId => 
+        api.sections.generate(deal.id, sectionId)
+      );
+      await Promise.allSettled(promises);
+      refresh();
+    } catch (err) {
+      console.error("Draft selected failed:", err);
+    } finally {
+      setDraftingSelected(false);
     }
   };
 
@@ -370,29 +440,66 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                 style={{ width: `${totalSections > 0 ? (readySections / totalSections) * 100 : 0}%` }}
               />
             </div>
-            <button
-              onClick={handleDraftAll}
-              disabled={draftingAll}
-              className="w-full inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
-            >
-              {draftingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              {draftingAll ? "Drafting all sections…" : "Draft All Sections"}
-            </button>
+            <div className="flex gap-2 mt-3">
+              <button
+                onClick={handleDraftAll}
+                disabled={draftingAll || draftingSelected}
+                className="flex-1 inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary/10 px-3 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-60 transition-colors"
+              >
+                {draftingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                Draft All
+              </button>
+              <button
+                onClick={handleDraftSelected}
+                disabled={draftingAll || draftingSelected || selectedSectionIds.size === 0}
+                className="flex-1 inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
+              >
+                {draftingSelected ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                Draft Selected ({selectedSectionIds.size})
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Section List */}
         <div className="doc-card">
-          <div className="doc-section-header"><span>Sections</span></div>
+          <div className="doc-section-header justify-between">
+            <span>Sections</span>
+            <button
+              onClick={() => {
+                if (selectedSectionIds.size === deal.sections.length) {
+                  setSelectedSectionIds(new Set());
+                } else {
+                  setSelectedSectionIds(new Set(deal.sections.map(s => s.id)));
+                }
+              }}
+              className="text-[10px] font-medium text-primary hover:underline"
+            >
+              {selectedSectionIds.size === deal.sections.length ? "Deselect All" : "Select All"}
+            </button>
+          </div>
           <ul className="divide-y max-h-[500px] overflow-y-auto">
             {deal.sections.map((s, i) => (
-              <li key={s.id}>
+              <li key={s.id} className="flex items-center">
+                <div className="pl-3 py-2.5 shrink-0 flex items-center justify-center">
+                  <input
+                    type="checkbox"
+                    checked={selectedSectionIds.has(s.id)}
+                    onChange={(e) => {
+                      const newSet = new Set(selectedSectionIds);
+                      if (e.target.checked) newSet.add(s.id);
+                      else newSet.delete(s.id);
+                      setSelectedSectionIds(newSet);
+                    }}
+                    className="h-3.5 w-3.5 rounded border-muted-foreground/30 text-primary focus:ring-primary cursor-pointer"
+                  />
+                </div>
                 <button
                   onClick={() => setActiveId(s.id)}
-                  className={`flex w-full items-center justify-between px-3 py-2.5 text-left text-sm transition-colors ${
+                  className={`flex flex-1 items-center justify-between pr-3 py-2.5 text-left text-sm transition-colors ${
                     activeId === s.id
-                      ? "bg-primary/5 border-l-2 border-l-primary"
-                      : "hover:bg-surface border-l-2 border-l-transparent"
+                      ? "bg-primary/5"
+                      : "hover:bg-surface"
                   }`}
                 >
                   <span className="flex items-center gap-2 min-w-0">
