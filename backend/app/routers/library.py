@@ -64,6 +64,10 @@ async def upload_to_library(
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
 
+    # ── Ensure Mistral Library exists BEFORE processing content ──
+    if not deal.mistral_library_id:
+        await MistralLibraryService.create_library(db, deal)
+
     if source_type == "file":
         if not file:
             raise HTTPException(
@@ -87,8 +91,22 @@ async def upload_to_library(
             )
         # Fetch content from URL
         try:
-            async with httpx.AsyncClient(timeout=30.0) as http_client:
-                response = await http_client.get(url)
+            headers = {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/131.0.0.0 Safari/537.36"
+                ),
+                "Accept": (
+                    "text/html,application/xhtml+xml,application/xml;"
+                    "q=0.9,*/*;q=0.8"
+                ),
+                "Accept-Language": "en-US,en;q=0.9",
+            }
+            async with httpx.AsyncClient(
+                timeout=30.0, follow_redirects=True
+            ) as http_client:
+                response = await http_client.get(url, headers=headers)
                 response.raise_for_status()
                 file_bytes = response.content
                 filename = url.split("/")[-1] or "downloaded_file.txt"
@@ -96,6 +114,20 @@ async def upload_to_library(
                 if "text" in content_type or "json" in content_type:
                     if not filename.endswith((".txt", ".json", ".csv", ".md")):
                         filename = filename + ".txt"
+        except httpx.HTTPStatusError as e:
+            # Fallback: save URL as a text reference so the library still gets content
+            import logging
+            logging.getLogger(__name__).warning(
+                f"URL fetch returned HTTP {e.response.status_code} for {url}, "
+                f"saving as text reference"
+            )
+            file_bytes = (
+                f"Source URL: {url}\n\n"
+                f"Note: This URL could not be fetched automatically "
+                f"(HTTP {e.response.status_code} {e.response.reason_phrase}). "
+                f"The content should be reviewed manually.\n"
+            ).encode("utf-8")
+            filename = "url_reference.txt"
         except Exception as e:
             raise HTTPException(
                 status_code=400, detail=f"Failed to fetch URL: {str(e)}"
@@ -132,6 +164,9 @@ async def upload_to_library(
             status_code=400,
             detail="source_type must be 'file', 'url', or 'text'",
         )
+
+    # ── Sync all agents to this deal's library after upload ──
+    await MistralLibraryService.sync_agents_to_library(db, deal.mistral_library_id)
 
     return lib_file
 
