@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.models.deal import Deal, Section, AuditEntry
 from app.models.library_file import LibraryFile
 from app.services.mistral_library_service import MistralLibraryService
+from app.services.moderation_service import ModerationService
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,30 @@ class NarrativeService:
         # Update custom instructions if provided
         if custom_instructions is not None:
             section.custom_instructions = custom_instructions
+
+        # ── Moderation Gate ──────────────────────────────────────
+        # Check user-provided inputs before allowing generation
+        if section.custom_instructions or section.output_template:
+            moderation = await ModerationService.moderate_section_inputs(
+                custom_instructions=section.custom_instructions,
+                output_template=section.output_template,
+            )
+            section.moderation_status = "safe" if moderation.is_safe else "flagged"
+            section.moderation_details = json.dumps(moderation.to_dict())
+
+            if not moderation.is_safe:
+                db.commit()
+                db.refresh(section)
+                flagged = ", ".join(moderation.flagged_categories)
+                raise ValueError(
+                    f"Content moderation failed for '{section.title}'. "
+                    f"Flagged categories: {flagged}. "
+                    f"Please review and edit your custom instructions or output template."
+                )
+        else:
+            # No user inputs to moderate — clear any previous moderation status
+            section.moderation_status = None
+            section.moderation_details = None
 
         # Ensure agent exists for this section
         agent_id = MistralLibraryService.get_global_agent_id(db, section.section_key)
@@ -136,6 +161,21 @@ class NarrativeService:
         async def _generate_one(section: Section) -> dict:
             """Generate narrative for one section (runs as async task)."""
             try:
+                # ── Moderation Gate ──
+                if section.custom_instructions or section.output_template:
+                    moderation = await ModerationService.moderate_section_inputs(
+                        custom_instructions=section.custom_instructions,
+                        output_template=section.output_template,
+                    )
+                    section.moderation_status = "safe" if moderation.is_safe else "flagged"
+                    section.moderation_details = json.dumps(moderation.to_dict())
+
+                    if not moderation.is_safe:
+                        flagged = ", ".join(moderation.flagged_categories)
+                        raise ValueError(
+                            f"Moderation failed: {flagged}"
+                        )
+
                 agent_id = MistralLibraryService.get_global_agent_id(
                     db, section.section_key
                 )

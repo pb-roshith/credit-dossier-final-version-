@@ -68,6 +68,12 @@ export type Section = {
   } | null;
   output_template: string | null;
   template_file_path: string | null;
+  moderation_status: "safe" | "flagged" | null;
+  moderation_details: {
+    is_safe: boolean;
+    flagged_categories: string[];
+    details: Record<string, unknown>;
+  } | null;
   uploads: UploadBrief[]; // Legacy
   document_links: SectionDocumentLink[]; // Legacy
 };
@@ -241,6 +247,16 @@ export const api = {
     deleteTemplate: (dealId: string, sectionId: string) =>
       request<Section>(`${API_BASE}/deals/${dealId}/sections/${sectionId}/template`, {
         method: "DELETE",
+      }),
+    moderate: (dealId: string, sectionId: string) =>
+      request<{
+        moderation_status: string | null;
+        is_safe: boolean;
+        flagged_categories: string[];
+        details: Record<string, unknown>;
+        message: string;
+      }>(`${API_BASE}/deals/${dealId}/sections/${sectionId}/moderate`, {
+        method: "POST",
       }),
   },
 

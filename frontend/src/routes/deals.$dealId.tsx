@@ -4,7 +4,7 @@ import {
   ArrowLeft, FileText, Clock, Download, Sparkles, RefreshCw, Plus, TriangleAlert,
   Loader2, CheckCircle2, Upload, X, FileDown, BookOpenCheck, Trash2, FileType, Save,
   File as FileIcon, Link as LinkIcon, Type, Eye, EyeOff, BarChart3, Table as TableIcon,
-  ShieldCheck, AlertTriangle, ChevronDown, ChevronUp, Info, Library
+  ShieldCheck, ShieldAlert, AlertTriangle, ChevronDown, ChevronUp, Info, Library
 } from "lucide-react";
 import { api, formatAmount, type Deal, type Section } from "@/lib/deals";
 
@@ -241,12 +241,16 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const [draftingAll, setDraftingAll] = useState(false);
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [uploadingTemplate, setUploadingTemplate] = useState(false);
+  const [savingInstructions, setSavingInstructions] = useState(false);
   const [showTemplatePreview, setShowTemplatePreview] = useState(false);
   const [editingContent, setEditingContent] = useState(false);
   const [editedContent, setEditedContent] = useState("");
   const [savingContent, setSavingContent] = useState(false);
   const [selectedSectionIds, setSelectedSectionIds] = useState<Set<string>>(new Set());
   const [draftingSelected, setDraftingSelected] = useState(false);
+
+  // Moderation state
+  const [moderationError, setModerationError] = useState<string | null>(null);
 
   // Library document upload state
   const [showLibUpload, setShowLibUpload] = useState(false);
@@ -264,17 +268,26 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       setOutputTemplate(active.output_template || "");
       setShowTemplatePreview(false);
       setEditingContent(false);
+      setModerationError(null);
     }
   }, [activeId, active]);
 
   const handleGenerate = async () => {
     if (!active || generating) return;
+    setModerationError(null);
     setGenerating(true);
     try {
       await api.sections.generate(deal.id, active.id, customInstructions || undefined);
       refresh();
-    } catch (err) {
+    } catch (err: any) {
+      const msg = err?.message || "";
+      if (msg.includes("moderation") || msg.includes("flagged") || msg.includes("Flagged")) {
+        setModerationError(msg.replace(/^API \d+:\s*/, "").replace(/^"|"$/g, "").replace(/^\{"detail":"/, "").replace(/"\}$/, ""));
+      } else {
+        setModerationError(null);
+      }
       console.error("Generation failed:", err);
+      refresh();
     } finally {
       setGenerating(false);
     }
@@ -359,6 +372,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
     setSavingTemplate(true);
     try {
       await api.sections.update(deal.id, active.id, { output_template: outputTemplate || null });
+      setModerationError(null);
       refresh();
     } catch (err) {
       console.error("Save template failed:", err);
@@ -390,9 +404,25 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
     try {
       await api.sections.deleteTemplate(deal.id, active.id);
       setOutputTemplate("");
+      setModerationError(null);
       refresh();
     } catch (err) {
       console.error("Delete template failed:", err);
+    }
+  };
+
+  // ── Custom Instructions handler ──
+  const handleSaveInstructions = async () => {
+    if (!active || savingInstructions) return;
+    setSavingInstructions(true);
+    try {
+      await api.sections.update(deal.id, active.id, { custom_instructions: customInstructions || null });
+      setModerationError(null);
+      refresh();
+    } catch (err) {
+      console.error("Save instructions failed:", err);
+    } finally {
+      setSavingInstructions(false);
     }
   };
 
@@ -418,6 +448,9 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const isFewShot = !!active.custom_instructions;
   const hasTemplate = !!active.output_template;
   const libDocCount = deal.library_files?.length || 0;
+  const isFlagged = active.moderation_status === "flagged";
+  const isModerationSafe = active.moderation_status === "safe";
+  const flaggedCategories = active.moderation_details?.flagged_categories || [];
 
   return (
     <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
@@ -551,6 +584,19 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               {hasTemplate && (
                 <span className="rounded-full bg-violet-100 text-violet-800 border border-violet-200 px-2 py-0.5 text-[10px] font-semibold">
                   Template
+                </span>
+              )}
+              {/* Moderation badge */}
+              {isFlagged && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-red-100 text-red-700 border border-red-200 px-2 py-0.5 text-[10px] font-semibold" title={`Flagged: ${flaggedCategories.join(", ")}`}>
+                  <ShieldAlert className="h-3 w-3" />
+                  Flagged
+                </span>
+              )}
+              {isModerationSafe && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 px-2 py-0.5 text-[10px] font-semibold">
+                  <ShieldCheck className="h-3 w-3" />
+                  Safe
                 </span>
               )}
               <span className={`section-status-badge ${active.state}`}>
@@ -763,11 +809,21 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               placeholder={`Provide example output patterns for the AI to follow (few-shot approach).\n\nExample:\n"For the executive summary, start with a recommendation paragraph, then use bullet points for key highlights. Include a risk summary table at the end."`}
               className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             />
-            <p className="text-[10px] text-muted-foreground mt-1.5">
-              {customInstructions.trim()
-                ? "✨ Few-shot mode — the agent will use your instructions as example patterns."
-                : "No instructions set — the agent will run in zero-shot mode."}
-            </p>
+            <div className="flex items-center justify-between mt-2">
+              <p className="text-[10px] text-muted-foreground">
+                {customInstructions.trim()
+                  ? "✨ Few-shot mode — the agent will use your instructions as example patterns."
+                  : "No instructions set — the agent will run in zero-shot mode."}
+              </p>
+              <button
+                onClick={handleSaveInstructions}
+                disabled={savingInstructions || customInstructions === (active.custom_instructions || "")}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md bg-amber-600 px-3 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-40 transition-colors"
+              >
+                {savingInstructions ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                Save Instructions
+              </button>
+            </div>
           </div>
         </div>
 
@@ -917,14 +973,125 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               )}
               <button
                 onClick={handleGenerate}
-                disabled={generating || editingContent}
+                disabled={generating || editingContent || isFlagged}
+                title={isFlagged ? `Blocked: content flagged (${flaggedCategories.join(", ")})` : undefined}
                 className="inline-flex h-7 items-center gap-1 rounded-md border border-primary-foreground/30 bg-primary-foreground/10 px-2 text-xs font-medium disabled:opacity-60 hover:bg-primary-foreground/20 transition-colors"
               >
-                {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                {generating ? "Generating…" : "Generate"}
+                {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : isFlagged ? <ShieldAlert className="h-3.5 w-3.5" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                {generating ? "Generating…" : isFlagged ? "Blocked" : "Generate"}
               </button>
             </div>
           </div>
+
+          {/* Moderation Warning Banner */}
+          {(isFlagged || moderationError) && (() => {
+            // Human-readable category labels and fix guidance
+            const categoryInfo: Record<string, { label: string; fix: string }> = {
+              sexual: { label: "Sexual Content", fix: "Remove any sexually explicit or suggestive language." },
+              hate_and_discrimination: { label: "Hate & Discrimination", fix: "Remove language targeting specific groups based on race, religion, gender, or other protected characteristics." },
+              violence_and_threats: { label: "Violence & Threats", fix: "Remove any references to physical harm, threats, or violent actions." },
+              dangerous_and_criminal_content: { label: "Dangerous & Criminal", fix: "Remove instructions related to illegal activities, fraud, or dangerous actions." },
+              selfharm: { label: "Self-Harm", fix: "Remove any references to self-harm or suicide." },
+              health: { label: "Health Advice", fix: "Remove unqualified medical or health advice." },
+              financial: { label: "Financial Advice", fix: "Remove specific investment recommendations or financial advice outside the credit analysis scope." },
+              pii: { label: "Personal Information (PII)", fix: "Remove personal identifiable information such as phone numbers, addresses, or ID numbers." },
+              law: { label: "Legal Advice", fix: "Remove specific legal counsel or recommendations." },
+            };
+
+            // Parse per-field details from moderation_details
+            const details = active.moderation_details?.details as Record<string, { is_safe?: boolean; flagged_categories?: string[] }> | undefined;
+            const instructionsFlagged = details?.custom_instructions && !details.custom_instructions.is_safe;
+            const templateFlagged = details?.output_template && !details.output_template.is_safe;
+            const instructionsCategories: string[] = details?.custom_instructions?.flagged_categories || [];
+            const templateCategories: string[] = details?.output_template?.flagged_categories || [];
+
+            return (
+              <div className="px-5 py-4 bg-red-50 border-b border-red-200 space-y-3">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="h-5 w-5 text-red-600 shrink-0" />
+                  <span className="text-xs font-bold text-red-800 uppercase tracking-wide">
+                    Content Moderation — Generation Blocked
+                  </span>
+                </div>
+
+                {moderationError && !isFlagged && (
+                  <div className="text-xs text-red-700 bg-red-100 rounded-md px-3 py-2">
+                    {moderationError}
+                  </div>
+                )}
+
+                {/* Per-field breakdown */}
+                {instructionsFlagged && (
+                  <div className="rounded-md border border-red-200 bg-white/60 p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1 rounded bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 text-[10px] font-bold uppercase">
+                        Custom Instructions
+                      </span>
+                      <span className="text-[10px] text-red-600 font-medium">— Flagged</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {instructionsCategories.map((cat: string) => {
+                        const info = categoryInfo[cat] || { label: cat.replace(/_/g, " "), fix: "Review and edit this content." };
+                        return (
+                          <div key={cat} className="flex items-start gap-2 text-xs">
+                            <span className="rounded-full bg-red-200/60 text-red-800 px-2 py-0.5 text-[10px] font-semibold shrink-0 mt-0.5">
+                              {info.label}
+                            </span>
+                            <span className="text-red-700">{info.fix}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {templateFlagged && (
+                  <div className="rounded-md border border-red-200 bg-white/60 p-3 space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1 rounded bg-violet-100 text-violet-800 border border-violet-200 px-2 py-0.5 text-[10px] font-bold uppercase">
+                        Output Template
+                      </span>
+                      <span className="text-[10px] text-red-600 font-medium">— Flagged</span>
+                    </div>
+                    <div className="space-y-1.5">
+                      {templateCategories.map((cat: string) => {
+                        const info = categoryInfo[cat] || { label: cat.replace(/_/g, " "), fix: "Review and edit this content." };
+                        return (
+                          <div key={cat} className="flex items-start gap-2 text-xs">
+                            <span className="rounded-full bg-red-200/60 text-red-800 px-2 py-0.5 text-[10px] font-semibold shrink-0 mt-0.5">
+                              {info.label}
+                            </span>
+                            <span className="text-red-700">{info.fix}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Fallback: if we have flagged categories but no per-field breakdown */}
+                {!instructionsFlagged && !templateFlagged && flaggedCategories.length > 0 && (
+                  <div className="rounded-md border border-red-200 bg-white/60 p-3 space-y-1.5">
+                    {flaggedCategories.map((cat: string) => {
+                      const info = categoryInfo[cat] || { label: cat.replace(/_/g, " "), fix: "Review and edit this content." };
+                      return (
+                        <div key={cat} className="flex items-start gap-2 text-xs">
+                          <span className="rounded-full bg-red-200/60 text-red-800 px-2 py-0.5 text-[10px] font-semibold shrink-0 mt-0.5">
+                            {info.label}
+                          </span>
+                          <span className="text-red-700">{info.fix}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                <p className="text-[10px] text-red-600 italic">
+                  Fix the flagged content above, then save again. The moderation check will re-run automatically.
+                </p>
+              </div>
+            );
+          })()}
 
           {active.generated_content ? (
             <div className="narrative-content-enter">
@@ -991,12 +1158,22 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               </div>
               <button
                 onClick={handleGenerate}
-                disabled={generating}
-                className="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90 disabled:opacity-60 transition-colors"
+                disabled={generating || isFlagged}
+                title={isFlagged ? `Blocked: content flagged (${flaggedCategories.join(", ")})` : undefined}
+                className={`inline-flex h-10 items-center gap-2 rounded-md px-5 text-sm font-medium shadow disabled:opacity-60 transition-colors ${
+                  isFlagged
+                    ? "bg-red-600 text-white hover:bg-red-700"
+                    : "bg-primary text-primary-foreground hover:bg-primary/90"
+                }`}
               >
-                {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                {generating ? "Generating…" : "Generate Draft"}
+                {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : isFlagged ? <ShieldAlert className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+                {generating ? "Generating…" : isFlagged ? "Generation Blocked" : "Generate Draft"}
               </button>
+              {isFlagged && (
+                <p className="text-xs text-red-600 mt-2 max-w-sm">
+                  Edit your custom instructions or output template to resolve moderation flags.
+                </p>
+              )}
             </div>
           )}
         </div>

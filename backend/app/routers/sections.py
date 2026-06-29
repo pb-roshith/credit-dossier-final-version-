@@ -16,6 +16,7 @@ from app.schemas.narrative import NarrativeRequest, NarrativeResponse, DraftAllR
 from app.services.deal_service import DealService
 from app.services.narrative_service import NarrativeService
 from app.services.ingestion_service import extract_text_preview
+from app.services.moderation_service import ModerationService
 
 router = APIRouter(prefix="/api/deals/{deal_id}/sections", tags=["sections"])
 
@@ -30,16 +31,37 @@ def list_sections(deal_id: str, db: Session = Depends(get_db)):
 
 
 @router.patch("/{section_id}", response_model=SectionResponse)
-def update_section(
+async def update_section(
     deal_id: str,
     section_id: str,
     data: SectionUpdate,
     db: Session = Depends(get_db),
 ):
     """Update section expected output, custom instructions, output template, or state."""
-    section = DealService.update_section(db, section_id, data.model_dump(exclude_unset=True))
+    update_data = data.model_dump(exclude_unset=True)
+    section = DealService.update_section(db, section_id, update_data)
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
+
+    # Auto-run moderation when user inputs change
+    if "custom_instructions" in update_data or "output_template" in update_data:
+        import json as _json
+        has_custom = section.custom_instructions and section.custom_instructions.strip()
+        has_template = section.output_template and section.output_template.strip()
+        if has_custom or has_template:
+            moderation = await ModerationService.moderate_section_inputs(
+                custom_instructions=section.custom_instructions,
+                output_template=section.output_template,
+            )
+            section.moderation_status = "safe" if moderation.is_safe else "flagged"
+            section.moderation_details = _json.dumps(moderation.to_dict())
+        else:
+            # Both inputs are empty/cleared — remove moderation flags
+            section.moderation_status = None
+            section.moderation_details = None
+        db.commit()
+        db.refresh(section)
+
     DealService.update_deal_status_from_sections(db, deal_id)
     return section
 
@@ -53,9 +75,12 @@ async def generate_narrative(
 ):
     """Generate AI narrative for a single section using its dedicated Mistral agent."""
     custom_instructions = body.custom_instructions if body else None
-    section = await NarrativeService.generate_section(
-        db, deal_id, section_id, custom_instructions
-    )
+    try:
+        section = await NarrativeService.generate_section(
+            db, deal_id, section_id, custom_instructions
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not section:
         raise HTTPException(status_code=404, detail="Deal or section not found")
 
@@ -108,6 +133,59 @@ async def draft_all_sections(deal_id: str, db: Session = Depends(get_db)):
         succeeded=succeeded,
         failed=len(results) - succeeded,
     )
+
+
+# ── Content Moderation ──────────────────────────────────────────
+
+@router.post("/{section_id}/moderate")
+async def moderate_section(
+    deal_id: str,
+    section_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Run content moderation on a section's user-provided inputs.
+    Returns moderation status and flagged categories.
+    """
+    import json as _json
+    section = DealService.get_section(db, section_id)
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+
+    if not section.custom_instructions and not section.output_template:
+        section.moderation_status = None
+        section.moderation_details = None
+        db.commit()
+        db.refresh(section)
+        return {
+            "moderation_status": None,
+            "is_safe": True,
+            "flagged_categories": [],
+            "message": "No user inputs to moderate.",
+        }
+
+    moderation = await ModerationService.moderate_section_inputs(
+        custom_instructions=section.custom_instructions,
+        output_template=section.output_template,
+    )
+
+    section.moderation_status = "safe" if moderation.is_safe else "flagged"
+    section.moderation_details = _json.dumps(moderation.to_dict())
+    db.commit()
+    db.refresh(section)
+
+    return {
+        "moderation_status": section.moderation_status,
+        "is_safe": moderation.is_safe,
+        "flagged_categories": moderation.flagged_categories,
+        "details": moderation.details,
+        "message": (
+            "Content passed moderation."
+            if moderation.is_safe
+            else f"Content flagged: {', '.join(moderation.flagged_categories)}. "
+                 f"Please edit your inputs before generating."
+        ),
+    }
 
 
 # ── Template Management ────────────────────────────────────────
@@ -185,6 +263,13 @@ def delete_template(
 
     section.output_template = None
     section.template_file_path = None
+
+    # Re-evaluate moderation: if no user inputs remain, clear moderation flags
+    has_custom = section.custom_instructions and section.custom_instructions.strip()
+    if not has_custom:
+        section.moderation_status = None
+        section.moderation_details = None
+
     db.commit()
     db.refresh(section)
 

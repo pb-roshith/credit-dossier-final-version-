@@ -76,15 +76,17 @@ class SectionResponse(BaseModel):
     accuracy_details: Optional[dict] = None
     output_template: Optional[str] = None
     template_file_path: Optional[str] = None
+    moderation_status: Optional[str] = None
+    moderation_details: Optional[dict] = None
     uploads: list[UploadBrief] = []  # Legacy
     document_links: list[SectionDocumentLinkResponse] = []  # New
 
     model_config = {"from_attributes": True}
 
-    @field_validator("accuracy_details", mode="before")
+    @field_validator("accuracy_details", "moderation_details", mode="before")
     @classmethod
-    def parse_accuracy_details(cls, v):
-        """Parse accuracy_details from JSON string (DB storage) to dict."""
+    def parse_json_details(cls, v):
+        """Parse JSON string fields (DB storage) to dict."""
         if isinstance(v, str):
             try:
                 return json.loads(v)

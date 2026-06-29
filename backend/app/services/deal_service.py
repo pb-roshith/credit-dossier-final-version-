@@ -172,9 +172,20 @@ class DealService:
         if not section:
             return None
 
+        # Fields that can legitimately be set to None (cleared)
+        nullable_fields = {
+            "custom_instructions", "output_template", "generated_content",
+            "moderation_status", "moderation_details",
+            "accuracy_score", "accuracy_details",
+        }
+
         for key, value in data.items():
-            if value is not None and hasattr(section, key):
-                setattr(section, key, value)
+            if not hasattr(section, key):
+                continue
+            # Allow None for nullable fields; skip None for non-nullable fields
+            if value is None and key not in nullable_fields:
+                continue
+            setattr(section, key, value)
 
         db.commit()
         db.refresh(section)

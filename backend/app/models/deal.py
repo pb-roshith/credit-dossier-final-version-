@@ -103,6 +103,10 @@ class Section(Base):
     output_template: Mapped[str | None] = mapped_column(Text, nullable=True)
     template_file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
+    # Moderation — guardrail status for user-provided inputs
+    moderation_status: Mapped[str | None] = mapped_column(String(16), nullable=True)  # "safe", "flagged", or None
+    moderation_details: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+
     # Relationships
     deal: Mapped["Deal"] = relationship(back_populates="sections")
     uploads: Mapped[list["Upload"]] = relationship(  # type: ignore[name-defined]

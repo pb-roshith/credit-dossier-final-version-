@@ -1,0 +1,185 @@
+"""
+Moderation Service — content guardrailing via Mistral's classifiers.moderate API.
+
+Uses the `mistral-moderation-latest` model to check user-provided inputs
+(custom instructions, output templates) before allowing narrative generation.
+
+Categories checked:
+  - sexual, hate_and_discrimination, violence_and_threats,
+    dangerous_and_criminal_content, selfharm, health, financial, pii
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass, field
+from typing import Any
+
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+# Lazy Mistral client (shared with mistral_library_service)
+_mistral_client = None
+
+
+def _get_client():
+    global _mistral_client
+    if _mistral_client is None:
+        from mistralai.client import Mistral
+        _mistral_client = Mistral(api_key=settings.MISTRAL_API_KEY)
+    return _mistral_client
+
+
+# Model to use for moderation
+MODERATION_MODEL = "mistral-moderation-latest"
+
+
+@dataclass
+class ModerationResult:
+    """Result of a moderation check."""
+    is_safe: bool
+    flagged_categories: list[str] = field(default_factory=list)
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "is_safe": self.is_safe,
+            "flagged_categories": self.flagged_categories,
+            "details": self.details,
+        }
+
+
+class ModerationService:
+    """Provides content moderation using Mistral's classifiers API."""
+
+    @staticmethod
+    async def moderate_text(text: str) -> ModerationResult:
+        """
+        Moderate a single text string using Mistral's moderation classifier.
+
+        Returns a ModerationResult with flagged categories and per-category details.
+        """
+        if not text or not text.strip():
+            return ModerationResult(is_safe=True)
+
+        client = _get_client()
+
+        try:
+            response = await client.classifiers.moderate_async(
+                model=MODERATION_MODEL,
+                inputs=[text],
+            )
+
+            # response.results is a list (one per input)
+            if not response.results:
+                logger.warning("Moderation API returned empty results")
+                return ModerationResult(is_safe=True)
+
+            result = response.results[0]
+
+            # Extract category results
+            flagged_categories = []
+            details = {}
+
+            # The result has a `categories` dict with category name → flagged (bool)
+            categories = getattr(result, "categories", {})
+            category_scores = getattr(result, "category_scores", {})
+
+            if isinstance(categories, dict):
+                for category, flagged in categories.items():
+                    details[category] = {
+                        "flagged": flagged,
+                        "score": category_scores.get(category, 0.0)
+                            if isinstance(category_scores, dict) else 0.0,
+                    }
+                    if flagged:
+                        flagged_categories.append(category)
+            else:
+                # Handle object-style attributes (Pydantic model)
+                for attr_name in dir(categories):
+                    if attr_name.startswith("_"):
+                        continue
+                    val = getattr(categories, attr_name, None)
+                    if isinstance(val, bool):
+                        score = 0.0
+                        if category_scores:
+                            score = getattr(category_scores, attr_name, 0.0)
+                        details[attr_name] = {
+                            "flagged": val,
+                            "score": score,
+                        }
+                        if val:
+                            flagged_categories.append(attr_name)
+
+            is_safe = len(flagged_categories) == 0
+
+            if not is_safe:
+                logger.warning(
+                    f"Content flagged by moderation: {flagged_categories}"
+                )
+            else:
+                logger.info("Content passed moderation check")
+
+            return ModerationResult(
+                is_safe=is_safe,
+                flagged_categories=flagged_categories,
+                details=details,
+            )
+
+        except Exception as e:
+            logger.error(f"Moderation API call failed: {e}")
+            # On API failure, default to safe to avoid blocking
+            # (fail-open policy — can be changed to fail-closed)
+            return ModerationResult(
+                is_safe=True,
+                details={"error": str(e)},
+            )
+
+    @staticmethod
+    async def moderate_section_inputs(
+        custom_instructions: str | None = None,
+        output_template: str | None = None,
+    ) -> ModerationResult:
+        """
+        Moderate all user-provided inputs for a section.
+
+        Checks custom_instructions and output_template separately,
+        then combines results. If any input is flagged, the overall
+        result is flagged.
+        """
+        all_flagged: list[str] = []
+        all_details: dict[str, Any] = {}
+
+        # Check custom instructions
+        if custom_instructions and custom_instructions.strip():
+            result = await ModerationService.moderate_text(custom_instructions)
+            if not result.is_safe:
+                all_flagged.extend(result.flagged_categories)
+            all_details["custom_instructions"] = {
+                "is_safe": result.is_safe,
+                "flagged_categories": result.flagged_categories,
+                "details": result.details,
+            }
+
+        # Check output template
+        if output_template and output_template.strip():
+            result = await ModerationService.moderate_text(output_template)
+            if not result.is_safe:
+                # Avoid duplicate categories
+                for cat in result.flagged_categories:
+                    if cat not in all_flagged:
+                        all_flagged.append(cat)
+            all_details["output_template"] = {
+                "is_safe": result.is_safe,
+                "flagged_categories": result.flagged_categories,
+                "details": result.details,
+            }
+
+        is_safe = len(all_flagged) == 0
+
+        return ModerationResult(
+            is_safe=is_safe,
+            flagged_categories=all_flagged,
+            details=all_details,
+        )
