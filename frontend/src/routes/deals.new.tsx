@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { useState, type FormEvent } from "react";
 import { ArrowLeft, FilePlus2, Loader2 } from "lucide-react";
 import { api, type DealType } from "@/lib/deals";
+import { CurrencyCombobox } from "@/components/CurrencyCombobox";
 
 export const Route = createFileRoute("/deals/new")({
   head: () => ({ meta: [{ title: "New Deal — Credit Pitch Book" }] }),
@@ -106,9 +107,7 @@ function NewDeal() {
               </select>
             </Field>
             <Field label="Currency">
-              <select className={selectCls} value={form.currency} onChange={e => set("currency", e.target.value)}>
-                <option>INR</option><option>USD</option><option>EUR</option><option>GBP</option>
-              </select>
+              <CurrencyCombobox value={form.currency} onChange={(code) => set("currency", code)} />
             </Field>
             <Field label="Amount (in units of currency)"><input type="number" min={0} className={inputCls} value={form.amount} onChange={e => set("amount", Number(e.target.value))} /></Field>
             <Field label="Tenure (months)"><input type="number" min={1} className={inputCls} value={form.tenure} onChange={e => set("tenure", Number(e.target.value))} /></Field>
