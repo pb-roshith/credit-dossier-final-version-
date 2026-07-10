@@ -260,7 +260,7 @@ class ExportService:
         import asyncio
         import httpx
         import re
-        from app.services.mistral_library_service import _get_client
+        from app.services.mistral_library_service import _get_client, _call_with_retry
         from app.config import settings
 
         prs = Presentation()
@@ -376,14 +376,17 @@ class ExportService:
                                 native_tables.append((headers, rows))
                 
                 try:
-                    response = await client.chat.complete_async(
-                        model=settings.MISTRAL_MODEL,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": f"Section: {section.title}\n\nContent:\n{content}"}
-                        ],
-                        temperature=0.2,
-                        response_format={"type": "json_object"}
+                    response = await _call_with_retry(
+                        lambda sec=section: client.chat.complete_async(
+                            model=settings.MISTRAL_MODEL,
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": f"Section: {sec.title}\n\nContent:\n{sec.generated_content}"}
+                            ],
+                            temperature=0.2,
+                            response_format={"type": "json_object"}
+                        ),
+                        description=f"PPT slide generation for '{section.title}'",
                     )
                     
                     raw = response.choices[0].message.content or "{}"

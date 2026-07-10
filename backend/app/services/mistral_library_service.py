@@ -10,6 +10,7 @@ Handles:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -26,13 +27,75 @@ logger = logging.getLogger(__name__)
 # Lazy Mistral client
 _mistral_client = None
 
+# Timeout for Mistral API calls (5 minutes — agent RAG completions are slow)
+_MISTRAL_TIMEOUT_MS = 300_000
+# Retry configuration for transient errors (timeouts, 5xx, connection errors)
+_MAX_RETRIES = 3
+_RETRY_BASE_DELAY = 5  # seconds
+
 
 def _get_client():
     global _mistral_client
     if _mistral_client is None:
         from mistralai.client import Mistral
-        _mistral_client = Mistral(api_key=settings.MISTRAL_API_KEY)
+        _mistral_client = Mistral(
+            api_key=settings.MISTRAL_API_KEY,
+            timeout_ms=_MISTRAL_TIMEOUT_MS,
+        )
     return _mistral_client
+
+
+def _reset_client():
+    """Force re-creation of the Mistral client (e.g. after config changes)."""
+    global _mistral_client
+    _mistral_client = None
+
+
+async def _call_with_retry(coro_factory, description: str = "Mistral API call"):
+    """
+    Call a Mistral async API with automatic retry on transient errors.
+
+    `coro_factory` must be a zero-arg callable that returns a *new* awaitable
+    each time it is called (lambdas work well).
+    """
+    import httpx
+
+    last_exc = None
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            return await coro_factory()
+        except (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
+            last_exc = exc
+            delay = _RETRY_BASE_DELAY * (2 ** (attempt - 1))  # 5, 10, 20
+            logger.warning(
+                f"{description}: timeout on attempt {attempt}/{_MAX_RETRIES} "
+                f"({type(exc).__name__}). Retrying in {delay}s..."
+            )
+            await asyncio.sleep(delay)
+        except httpx.HTTPStatusError as exc:
+            # Retry on 5xx server errors only
+            if exc.response.status_code >= 500:
+                last_exc = exc
+                delay = _RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                logger.warning(
+                    f"{description}: server error {exc.response.status_code} "
+                    f"on attempt {attempt}/{_MAX_RETRIES}. Retrying in {delay}s..."
+                )
+                await asyncio.sleep(delay)
+            else:
+                raise
+        except (httpx.RemoteProtocolError, httpx.ReadError, ConnectionError, OSError) as exc:
+            last_exc = exc
+            delay = _RETRY_BASE_DELAY * (2 ** (attempt - 1))
+            logger.warning(
+                f"{description}: connection error on attempt {attempt}/{_MAX_RETRIES} "
+                f"({type(exc).__name__}). Retrying in {delay}s..."
+            )
+            await asyncio.sleep(delay)
+
+    # All retries exhausted
+    logger.error(f"{description}: all {_MAX_RETRIES} attempts failed.")
+    raise last_exc  # type: ignore[misc]
 
 
 class MistralLibraryService:
@@ -303,9 +366,12 @@ class MistralLibraryService:
         logger.info(f"Generating with agent {agent_id} for section: {section_title}")
 
         try:
-            response = await client.agents.complete_async(
-                agent_id=agent_id,
-                messages=messages,
+            response = await _call_with_retry(
+                lambda: client.agents.complete_async(
+                    agent_id=agent_id,
+                    messages=messages,
+                ),
+                description=f"Agent completion for '{section_title}'",
             )
 
             content = None
@@ -318,9 +384,12 @@ class MistralLibraryService:
                 # Retry once with slightly different prompt
                 logger.warning(f"Empty response from agent {agent_id}, retrying...")
                 messages[0]["content"] += "\n\nPlease generate the complete section now."
-                response = await client.agents.complete_async(
-                    agent_id=agent_id,
-                    messages=messages,
+                response = await _call_with_retry(
+                    lambda: client.agents.complete_async(
+                        agent_id=agent_id,
+                        messages=messages,
+                    ),
+                    description=f"Agent completion retry for '{section_title}'",
                 )
                 if getattr(response.choices[0], "message", None):
                     content = response.choices[0].message.content
@@ -329,6 +398,21 @@ class MistralLibraryService:
 
             if not content:
                 return f"[Generation failed — agent returned no content for {section_title}]"
+
+            # Normalize content — Mistral may return a list of content blocks
+            if isinstance(content, list):
+                # Join text parts; each element may be a dict with a "text" key or a plain string
+                parts = []
+                for part in content:
+                    if isinstance(part, str):
+                        parts.append(part)
+                    elif isinstance(part, dict) and "text" in part:
+                        parts.append(part["text"])
+                    elif hasattr(part, "text"):
+                        parts.append(part.text)
+                    else:
+                        parts.append(str(part))
+                content = "\n".join(parts)
 
             # Strip common preambles/search logs that Mistral sometimes outputs
             import re
@@ -410,14 +494,17 @@ class MistralLibraryService:
         )
 
         try:
-            response = await client.chat.complete_async(
-                model=settings.MISTRAL_MODEL,
-                messages=[
-                    {"role": "system", "content": evaluator_prompt},
-                    {"role": "user", "content": user_message},
-                ],
-                temperature=0.1,
-                max_tokens=512,
+            response = await _call_with_retry(
+                lambda: client.chat.complete_async(
+                    model=settings.MISTRAL_MODEL,
+                    messages=[
+                        {"role": "system", "content": evaluator_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                    temperature=0.1,
+                    max_tokens=512,
+                ),
+                description=f"Accuracy evaluation for '{section_title}'",
             )
 
             raw = response.choices[0].message.content or ""
