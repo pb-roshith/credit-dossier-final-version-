@@ -222,7 +222,7 @@ export const api = {
   sections: {
     list: (dealId: string) =>
       request<Section[]>(`${API_BASE}/deals/${dealId}/sections`),
-    update: (dealId: string, sectionId: string, data: { expected_output?: string; custom_instructions?: string; state?: string; output_template?: string | null }) =>
+    update: (dealId: string, sectionId: string, data: { expected_output?: string; custom_instructions?: string | null; state?: string; output_template?: string | null; generated_content?: string }) =>
       request<Section>(`${API_BASE}/deals/${dealId}/sections/${sectionId}`, {
         method: "PATCH",
         body: JSON.stringify(data),
@@ -370,6 +370,16 @@ export const api = {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     },
+  },
+  
+  // MCP Companies
+  companies: {
+    list: () =>
+      request<Array<{ name: string; blob_url: string; document_count: number }>>(`${API_BASE}/companies`),
+    documents: (companyName: string) =>
+      request<Array<{ document_name: string; document_url: string; summary?: string; size?: number; type?: string }>>(`${API_BASE}/companies/${encodeURIComponent(companyName)}/documents`),
+    details: (companyName: string) =>
+      request<{ industry?: string; geography?: string; segment?: string; kyc_status?: string }>(`${API_BASE}/companies/${encodeURIComponent(companyName)}/details`),
   },
 };
 

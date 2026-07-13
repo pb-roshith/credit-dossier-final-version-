@@ -20,6 +20,7 @@ from app.routers.uploads import router as uploads_router
 from app.routers.exports import router as exports_router
 from app.routers.documents import router as documents_router
 from app.routers.library import router as library_router
+from app.routers.mcp import router as mcp_router
 
 # Configure logging
 logging.basicConfig(
@@ -39,8 +40,10 @@ async def lifespan(app: FastAPI):
     from app.database import SessionLocal
     from app.services.mistral_library_service import MistralLibraryService
 
+    from app.services.mcp_service import MCPClientService
     db = SessionLocal()
     try:
+        await MCPClientService.connect()
         await MistralLibraryService.initialize_global_agents(db)
     finally:
         db.close()
@@ -51,6 +54,7 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         await MistralLibraryService.cleanup_global_agents(db)
+        await MCPClientService.disconnect()
     finally:
         db.close()
 
@@ -85,6 +89,7 @@ app.include_router(uploads_router)
 app.include_router(exports_router)
 app.include_router(documents_router)
 app.include_router(library_router)
+app.include_router(mcp_router)
 
 
 @app.get("/api/health")

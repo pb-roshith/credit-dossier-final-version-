@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { ArrowLeft, FilePlus2, Loader2 } from "lucide-react";
 import { api, type DealType } from "@/lib/deals";
 import { CurrencyCombobox } from "@/components/CurrencyCombobox";
+import { CompanyCombobox, type CompanyInfo } from "@/components/CompanyCombobox";
 
 export const Route = createFileRoute("/deals/new")({
   head: () => ({ meta: [{ title: "New Deal — Credit Pitch Book" }] }),
@@ -28,12 +29,39 @@ function NewDeal() {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({
-    customer: "", customerType: "Existing" as DealType, industry: "Manufacturing", segment: "Mid Corporate",
-    geography: "Mumbai, India", kyc: "verified" as "verified" | "pending",
-    facility: "Term Loan", currency: "INR", amount: 100000000, tenure: 60,
-    pricing: "Repo + 285 bps", repayment: "Equated quarterly", collateral: true, due: "2026-07-01",
+    customer: "", customerType: "Existing" as DealType, industry: "", segment: "",
+    geography: "", kyc: "verified" as "verified" | "pending",
+    facility: "Term Loan", currency: "INR", amount: 0, tenure: 12,
+    pricing: "", repayment: "Equated quarterly", collateral: true, due: "",
   });
   const set = <K extends keyof typeof form>(k: K, v: (typeof form)[K]) => setForm(p => ({ ...p, [k]: v }));
+
+  const handleCompanySelect = async (company: CompanyInfo | null) => {
+    if (company) {
+      set("customer", company.name);
+      try {
+        const details = await api.companies.details(company.name);
+        if (details) {
+          if (details.industry) set("industry", details.industry);
+          if (details.segment) set("segment", details.segment);
+          if (details.geography) set("geography", details.geography);
+          if (details.kyc_status) {
+            set("kyc", details.kyc_status.toLowerCase() === "verified" ? "verified" : "pending");
+          }
+        }
+      } catch (e) {
+        console.error("Failed to fetch company details", e);
+      }
+      
+      // Defaults for fields not returned by MCP
+      set("pricing", "Repo + 285 bps");
+      set("amount", 100000000);
+      set("tenure", 60);
+      set("due", new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().split('T')[0]);
+    } else {
+      set("customer", "");
+    }
+  };
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -75,7 +103,7 @@ function NewDeal() {
           <div className="doc-section-header"><FilePlus2 className="h-4 w-4 shrink-0" /><span>Customer Details</span></div>
           <div className="grid gap-4 p-5 sm:grid-cols-2">
             <Field label="Legal name" required>
-              <input className={inputCls} placeholder="e.g. Ujwal Industries Pvt Ltd" value={form.customer} onChange={e => set("customer", e.target.value)} />
+              <CompanyCombobox value={form.customer} onChange={handleCompanySelect} />
             </Field>
             <Field label="Customer type">
               <select className={selectCls} value={form.customerType} onChange={e => set("customerType", e.target.value as DealType)}>

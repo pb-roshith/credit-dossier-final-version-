@@ -14,6 +14,11 @@ from app.schemas.deal import (
 )
 from app.services.deal_service import DealService
 from app.services.mistral_library_service import MistralLibraryService
+from app.services.mcp_service import MCPClientService
+import httpx
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/deals", tags=["deals"])
 
@@ -72,12 +77,63 @@ def get_deal(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depe
     return deal
 
 
+async def fetch_and_upload_mcp_docs(deal_id: str):
+    from app.database import SessionLocal
+    db = SessionLocal()
+    try:
+        deal = DealService.get_deal(db, deal_id)
+        if not deal:
+            return
+            
+        docs = await MCPClientService.get_documents(deal.customer)
+        if not docs:
+            logger.info(f"No MCP docs found for {deal.customer}")
+            return
+            
+        existing_docs = {f.filename for f in deal.library_files}
+        async with httpx.AsyncClient() as client:
+            for doc in docs:
+                url = doc.get("document_url") or doc.get("url")
+                filename = doc.get("document_name") or doc.get("filename") or doc.get("name") or "document.pdf"
+                if not url:
+                    continue
+                if filename in existing_docs:
+                    logger.info(f"Skipping {filename}, already exists in library.")
+                    continue
+                try:
+                    logger.info(f"Downloading {url} for auto-upload")
+                    resp = await client.get(url, timeout=60.0)
+                    resp.raise_for_status()
+                    await MistralLibraryService.upload_file_to_library(
+                        db=db,
+                        deal=deal,
+                        file_bytes=resp.content,
+                        filename=filename,
+                        source_type="mcp_auto",
+                        note="Auto-uploaded from MCP Server"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to auto-upload {url}: {e}")
+    finally:
+        db.close()
+
+@router.post("/{deal_id}/sync_mcp", status_code=202)
+def sync_mcp_documents(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Manually trigger a sync of MCP documents for this deal."""
+    deal = DealService.get_deal(db, deal_id)
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+    background_tasks.add_task(fetch_and_upload_mcp_docs, deal.id)
+    return {"message": "Background sync started"}
+
+
 @router.post("", response_model=DealResponse, status_code=201)
 def create_deal(data: DealCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Create a new deal with 16 default sections."""
     deal = DealService.create_deal(db, data.model_dump())
     
     background_tasks.add_task(MistralLibraryService.sync_agents_to_library, db, deal.mistral_library_id)
+    background_tasks.add_task(fetch_and_upload_mcp_docs, deal.id)
     
     # Re-fetch with full relations
     full_deal = DealService.get_deal(db, deal.id)

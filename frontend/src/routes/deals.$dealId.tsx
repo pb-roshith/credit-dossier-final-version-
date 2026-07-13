@@ -14,7 +14,7 @@ export const Route = createFileRoute("/deals/$dealId")({
   component: DealDetail,
 });
 
-type Tab = "overview" | "narratives" | "versions" | "export";
+type Tab = "overview" | "documents" | "narratives" | "versions" | "export";
 
 function DealDetail() {
   const { dealId } = Route.useParams();
@@ -56,6 +56,7 @@ function DealDetail() {
 
   const tabs: { id: Tab; label: string; Icon: typeof FileText }[] = [
     { id: "overview", label: "Overview", Icon: FileText },
+    { id: "documents", label: "Documents", Icon: Library },
     { id: "narratives", label: "Narratives", Icon: Sparkles },
     { id: "versions", label: "Versions", Icon: Clock },
     { id: "export", label: "Export", Icon: Download },
@@ -152,6 +153,7 @@ function DealDetail() {
       </div>
 
       {tab === "overview" && <OverviewTab deal={deal} refresh={() => fetchDeal(true)} />}
+      {tab === "documents" && <DocumentsTab deal={deal} refresh={() => fetchDeal(true)} />}
       {tab === "narratives" && <NarrativesTab deal={deal} refresh={() => fetchDeal(true)} />}
       {tab === "versions" && <VersionsTab deal={deal} refresh={() => fetchDeal(true)} />}
       {tab === "export" && <ExportTab deal={deal} refresh={() => fetchDeal(true)} />}
@@ -252,15 +254,6 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   // Moderation state
   const [moderationError, setModerationError] = useState<string | null>(null);
 
-  // Library document upload state
-  const [showLibUpload, setShowLibUpload] = useState(false);
-  const [libUploadType, setLibUploadType] = useState<"file" | "url" | "text">("file");
-  const [libUploading, setLibUploading] = useState(false);
-  const [libUploadNote, setLibUploadNote] = useState("");
-  const [libUrlInput, setLibUrlInput] = useState("");
-  const [libTextInput, setLibTextInput] = useState("");
-  const [libSelectedFileName, setLibSelectedFileName] = useState("");
-
   useEffect(() => {
     if (active) {
       setExpected(active.expected_output);
@@ -319,50 +312,6 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       console.error("Draft selected failed:", err);
     } finally {
       setDraftingSelected(false);
-    }
-  };
-
-  // Library upload handler
-  const handleLibUpload = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (libUploading) return;
-    setLibUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append("source_type", libUploadType);
-      if (libUploadNote) formData.append("note", libUploadNote);
-
-      if (libUploadType === "file") {
-        const fileInput = document.getElementById("lib-file-input") as HTMLInputElement;
-        if (!fileInput?.files?.[0]) return;
-        formData.append("file", fileInput.files[0]);
-      } else if (libUploadType === "url") {
-        formData.append("url", libUrlInput);
-      } else {
-        formData.append("text_content", libTextInput);
-      }
-
-      await api.library.upload(deal.id, formData);
-
-      setLibUploadNote("");
-      setLibUrlInput("");
-      setLibTextInput("");
-      setLibSelectedFileName("");
-      setShowLibUpload(false);
-      refresh();
-    } catch (err) {
-      console.error("Library upload failed:", err);
-    } finally {
-      setLibUploading(false);
-    }
-  };
-
-  const handleDeleteLibFile = async (fileId: string) => {
-    try {
-      await api.library.delete(deal.id, fileId);
-      refresh();
-    } catch (err) {
-      console.error("Delete library file failed:", err);
     }
   };
 
@@ -620,172 +569,6 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
           </div>
         </div>
 
-        {/* ── Document Library (Centralized) ── */}
-        <div className="doc-card">
-          <div className="doc-section-header justify-between">
-            <span className="flex items-center gap-2">
-              <Library className="h-4 w-4 shrink-0" />
-              Document Library
-              {libDocCount > 0 && (
-                <span className="rounded-full bg-blue-500/20 text-blue-700 px-2 py-0.5 text-[10px] font-bold">
-                  {libDocCount} file{libDocCount !== 1 ? "s" : ""}
-                </span>
-              )}
-            </span>
-            <button
-              onClick={() => setShowLibUpload(!showLibUpload)}
-              className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-medium transition-colors ${
-                showLibUpload
-                  ? "border-red-300/50 bg-red-500/20 text-white hover:bg-red-500/30"
-                  : "border-primary-foreground/30 bg-primary-foreground/15 text-primary-foreground hover:bg-primary-foreground/25"
-              }`}
-            >
-              {showLibUpload ? <X className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
-              {showLibUpload ? "Cancel" : "Add Document"}
-            </button>
-          </div>
-
-          {/* Info banner */}
-          <div className="px-4 py-2 bg-blue-50/50 border-b border-blue-100/50 flex items-center gap-2">
-            <Info className="h-3.5 w-3.5 text-blue-500 shrink-0" />
-            <span className="text-[10px] text-blue-700">
-              All documents are shared across every section. Each AI agent automatically searches this library for relevant data.
-            </span>
-          </div>
-
-          {showLibUpload && (
-            <div className="p-4 bg-surface/50 border-b space-y-3">
-              <form onSubmit={handleLibUpload} className="space-y-3">
-                <div className="flex gap-1 rounded-lg bg-muted p-0.5">
-                  {[
-                    { type: "file" as const, label: "File", Icon: FileIcon },
-                    { type: "url" as const, label: "URL", Icon: LinkIcon },
-                    { type: "text" as const, label: "Text", Icon: Type },
-                  ].map(({ type, label, Icon }) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => setLibUploadType(type)}
-                      className={`flex-1 inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                        libUploadType === type
-                          ? "bg-background text-foreground shadow-sm"
-                          : "text-muted-foreground hover:text-foreground"
-                      }`}
-                    >
-                      <Icon className="h-3 w-3" /> {label}
-                    </button>
-                  ))}
-                </div>
-
-                {libUploadType === "file" && (
-                  <div className="relative rounded-lg border-2 border-dashed border-muted-foreground/30 bg-muted/20 p-6 text-center hover:bg-muted/40 hover:border-primary/40 transition-colors cursor-pointer">
-                    <input
-                      type="file"
-                      id="lib-file-input"
-                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                      accept=".pdf,.docx,.doc,.xlsx,.xls,.pptx,.csv,.txt,.md,.json"
-                      onChange={(e) => setLibSelectedFileName(e.target.files?.[0]?.name || "")}
-                    />
-                    <FileIcon className={`h-8 w-8 mx-auto mb-3 ${libSelectedFileName ? 'text-primary' : 'text-muted-foreground/60'}`} />
-                    {libSelectedFileName ? (
-                      <div className="text-sm font-semibold text-primary break-all px-4">{libSelectedFileName}</div>
-                    ) : (
-                      <>
-                        <div className="text-sm font-medium text-foreground mb-1">Click to browse or drag and drop</div>
-                        <div className="text-[10px] text-muted-foreground">PDF, DOCX, XLSX, PPTX, CSV, TXT, MD</div>
-                      </>
-                    )}
-                  </div>
-                )}
-                {libUploadType === "url" && (
-                  <input
-                    placeholder="https://example.com/document.pdf"
-                    value={libUrlInput}
-                    onChange={e => setLibUrlInput(e.target.value)}
-                    className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  />
-                )}
-                {libUploadType === "text" && (
-                  <textarea
-                    placeholder="Paste document content here…"
-                    value={libTextInput}
-                    onChange={e => setLibTextInput(e.target.value)}
-                    rows={4}
-                    className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  />
-                )}
-
-                <div className="flex gap-2">
-                  <input
-                    placeholder="Note (optional)"
-                    value={libUploadNote}
-                    onChange={e => setLibUploadNote(e.target.value)}
-                    className="flex-1 h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  />
-                  <button
-                    type="submit"
-                    disabled={libUploading}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
-                  >
-                    {libUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                    Upload to Library
-                  </button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {libDocCount > 0 ? (
-            <ul className="divide-y">
-              {deal.library_files.map(lf => {
-                const typeConfig: Record<string, { color: string; icon: string }> = {
-                  file: { color: "bg-blue-100 text-blue-700 border-blue-200", icon: "📄" },
-                  url: { color: "bg-green-100 text-green-700 border-green-200", icon: "🔗" },
-                  text: { color: "bg-orange-100 text-orange-700 border-orange-200", icon: "📝" },
-                };
-                const cfg = typeConfig[lf.source_type] || typeConfig.file;
-                const sizeStr = lf.file_size ? `${(lf.file_size / 1024).toFixed(0)} KB` : "";
-
-                return (
-                  <li key={lf.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-surface/50 transition-colors group">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-bold uppercase shrink-0 ${cfg.color}`}>
-                        {cfg.icon} {lf.source_type}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="text-xs font-medium truncate">
-                          {lf.filename}
-                        </div>
-                        <div className="text-[10px] text-muted-foreground flex gap-2 items-center">
-                          <span className="text-emerald-600 font-semibold">⚡ Mistral Library</span>
-                          {sizeStr && <span>{sizeStr}</span>}
-                          {lf.note && <span className="truncate max-w-[150px]">• {lf.note}</span>}
-                        </div>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => handleDeleteLibFile(lf.id)}
-                      className="rounded-md p-1.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all"
-                      title="Remove from library"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : !showLibUpload ? (
-            <div className="px-4 py-6 text-center">
-              <Library className="h-6 w-6 mx-auto mb-2 text-muted-foreground/40" />
-              <div className="text-xs text-muted-foreground">
-                No documents in the library yet.
-              </div>
-              <div className="text-[10px] text-muted-foreground/60 mt-1">
-                Upload files to enable AI agents to use real data for grounding.
-              </div>
-            </div>
-          ) : null}
-        </div>
 
         {/* ── Custom Instructions (Few-shot) ── */}
         <div className="doc-card">
@@ -984,114 +767,104 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
           </div>
 
           {/* Moderation Warning Banner */}
-          {(isFlagged || moderationError) && (() => {
-            // Human-readable category labels and fix guidance
-            const categoryInfo: Record<string, { label: string; fix: string }> = {
-              sexual: { label: "Sexual Content", fix: "Remove any sexually explicit or suggestive language." },
-              hate_and_discrimination: { label: "Hate & Discrimination", fix: "Remove language targeting specific groups based on race, religion, gender, or other protected characteristics." },
-              violence_and_threats: { label: "Violence & Threats", fix: "Remove any references to physical harm, threats, or violent actions." },
-              dangerous_and_criminal_content: { label: "Dangerous & Criminal", fix: "Remove instructions related to illegal activities, fraud, or dangerous actions." },
-              selfharm: { label: "Self-Harm", fix: "Remove any references to self-harm or suicide." },
-              health: { label: "Health Advice", fix: "Remove unqualified medical or health advice." },
-              financial: { label: "Financial Advice", fix: "Remove specific investment recommendations or financial advice outside the credit analysis scope." },
-              pii: { label: "Personal Information (PII)", fix: "Remove personal identifiable information such as phone numbers, addresses, or ID numbers." },
-              law: { label: "Legal Advice", fix: "Remove specific legal counsel or recommendations." },
-            };
-
-            // Parse per-field details from moderation_details
-            const details = active.moderation_details?.details as Record<string, { is_safe?: boolean; flagged_categories?: string[] }> | undefined;
-            const instructionsFlagged = details?.custom_instructions && !details.custom_instructions.is_safe;
-            const templateFlagged = details?.output_template && !details.output_template.is_safe;
-            const instructionsCategories: string[] = details?.custom_instructions?.flagged_categories || [];
-            const templateCategories: string[] = details?.output_template?.flagged_categories || [];
-
-            return (
-              <div className="px-5 py-4 bg-red-50 border-b border-red-200 space-y-3">
-                <div className="flex items-center gap-2">
-                  <ShieldAlert className="h-5 w-5 text-red-600 shrink-0" />
-                  <span className="text-xs font-bold text-red-800 uppercase tracking-wide">
-                    Content Moderation — Generation Blocked
-                  </span>
-                </div>
-
-                {moderationError && !isFlagged && (
-                  <div className="text-xs text-red-700 bg-red-100 rounded-md px-3 py-2">
-                    {moderationError}
-                  </div>
-                )}
-
-                {/* Per-field breakdown */}
-                {instructionsFlagged && (
-                  <div className="rounded-md border border-red-200 bg-white/60 p-3 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex items-center gap-1 rounded bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 text-[10px] font-bold uppercase">
-                        Custom Instructions
-                      </span>
-                      <span className="text-[10px] text-red-600 font-medium">— Flagged</span>
-                    </div>
-                    <div className="space-y-1.5">
-                      {instructionsCategories.map((cat: string) => {
-                        const info = categoryInfo[cat] || { label: cat.replace(/_/g, " "), fix: "Review and edit this content." };
-                        return (
-                          <div key={cat} className="flex items-start gap-2 text-xs">
-                            <span className="rounded-full bg-red-200/60 text-red-800 px-2 py-0.5 text-[10px] font-semibold shrink-0 mt-0.5">
-                              {info.label}
-                            </span>
-                            <span className="text-red-700">{info.fix}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {templateFlagged && (
-                  <div className="rounded-md border border-red-200 bg-white/60 p-3 space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex items-center gap-1 rounded bg-violet-100 text-violet-800 border border-violet-200 px-2 py-0.5 text-[10px] font-bold uppercase">
-                        Output Template
-                      </span>
-                      <span className="text-[10px] text-red-600 font-medium">— Flagged</span>
-                    </div>
-                    <div className="space-y-1.5">
-                      {templateCategories.map((cat: string) => {
-                        const info = categoryInfo[cat] || { label: cat.replace(/_/g, " "), fix: "Review and edit this content." };
-                        return (
-                          <div key={cat} className="flex items-start gap-2 text-xs">
-                            <span className="rounded-full bg-red-200/60 text-red-800 px-2 py-0.5 text-[10px] font-semibold shrink-0 mt-0.5">
-                              {info.label}
-                            </span>
-                            <span className="text-red-700">{info.fix}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Fallback: if we have flagged categories but no per-field breakdown */}
-                {!instructionsFlagged && !templateFlagged && flaggedCategories.length > 0 && (
-                  <div className="rounded-md border border-red-200 bg-white/60 p-3 space-y-1.5">
-                    {flaggedCategories.map((cat: string) => {
-                      const info = categoryInfo[cat] || { label: cat.replace(/_/g, " "), fix: "Review and edit this content." };
-                      return (
-                        <div key={cat} className="flex items-start gap-2 text-xs">
-                          <span className="rounded-full bg-red-200/60 text-red-800 px-2 py-0.5 text-[10px] font-semibold shrink-0 mt-0.5">
-                            {info.label}
-                          </span>
-                          <span className="text-red-700">{info.fix}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                <p className="text-[10px] text-red-600 italic">
-                  Fix the flagged content above, then save again. The moderation check will re-run automatically.
-                </p>
+          {(isFlagged || moderationError) && (
+            <div className="px-5 py-4 bg-red-50 border-b border-red-200 space-y-3">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-5 w-5 text-red-600 shrink-0" />
+                <span className="text-xs font-bold text-red-800 uppercase tracking-wide">
+                  Content Moderation — Generation Blocked
+                </span>
               </div>
-            );
-          })()}
+
+              {moderationError && !isFlagged && (
+                <div className="text-xs text-red-700 bg-red-100 rounded-md px-3 py-2">
+                  {moderationError}
+                </div>
+              )}
+
+              {/* Per-field breakdown */}
+              {active.moderation_details?.details && (() => {
+                const details = active.moderation_details.details as Record<string, { is_safe?: boolean; flagged_categories?: string[] }>;
+                const instructionsFlagged = details.custom_instructions && !details.custom_instructions.is_safe;
+                const templateFlagged = details.output_template && !details.output_template.is_safe;
+                const instructionsCategories: string[] = details.custom_instructions?.flagged_categories || [];
+                const templateCategories: string[] = details.output_template?.flagged_categories || [];
+
+                return (
+                  <>
+                    {instructionsFlagged && (
+                      <div className="rounded-md border border-red-200 bg-white/60 p-3 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1 rounded bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 text-[10px] font-bold uppercase">
+                            Custom Instructions
+                          </span>
+                          <span className="text-[10px] text-red-600 font-medium">— Flagged</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {instructionsCategories.map((cat: string) => {
+                            const info = MODERATION_CATEGORY_INFO[cat] || { label: cat.replace(/_/g, " "), fix: "Review and edit this content." };
+                            return (
+                              <div key={cat} className="flex items-start gap-2 text-xs">
+                                <span className="rounded-full bg-red-200/60 text-red-800 px-2 py-0.5 text-[10px] font-semibold shrink-0 mt-0.5">
+                                  {info.label}
+                                </span>
+                                <span className="text-red-700">{info.fix}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {templateFlagged && (
+                      <div className="rounded-md border border-red-200 bg-white/60 p-3 space-y-2">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1 rounded bg-violet-100 text-violet-800 border border-violet-200 px-2 py-0.5 text-[10px] font-bold uppercase">
+                            Output Template
+                          </span>
+                          <span className="text-[10px] text-red-600 font-medium">— Flagged</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {templateCategories.map((cat: string) => {
+                            const info = MODERATION_CATEGORY_INFO[cat] || { label: cat.replace(/_/g, " "), fix: "Review and edit this content." };
+                            return (
+                              <div key={cat} className="flex items-start gap-2 text-xs">
+                                <span className="rounded-full bg-red-200/60 text-red-800 px-2 py-0.5 text-[10px] font-semibold shrink-0 mt-0.5">
+                                  {info.label}
+                                </span>
+                                <span className="text-red-700">{info.fix}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Fallback */}
+                    {!instructionsFlagged && !templateFlagged && flaggedCategories.length > 0 && (
+                      <div className="rounded-md border border-red-200 bg-white/60 p-3 space-y-1.5">
+                        {flaggedCategories.map((cat: string) => {
+                          const info = MODERATION_CATEGORY_INFO[cat] || { label: cat.replace(/_/g, " "), fix: "Review and edit this content." };
+                          return (
+                            <div key={cat} className="flex items-start gap-2 text-xs">
+                              <span className="rounded-full bg-red-200/60 text-red-800 px-2 py-0.5 text-[10px] font-semibold shrink-0 mt-0.5">
+                                {info.label}
+                              </span>
+                              <span className="text-red-700">{info.fix}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+
+              <p className="text-[10px] text-red-600 italic">
+                Fix the flagged content above, then save again. The moderation check will re-run automatically.
+              </p>
+            </div>
+          )}
 
           {active.generated_content ? (
             <div className="narrative-content-enter">
@@ -1176,6 +949,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               )}
             </div>
           )}
+
         </div>
       </div>
     </div>
@@ -1387,6 +1161,18 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend
 } from "recharts";
 
+const MODERATION_CATEGORY_INFO: Record<string, { label: string; fix: string }> = {
+  sexual: { label: "Sexual Content", fix: "Remove any sexually explicit or suggestive language." },
+  hate_and_discrimination: { label: "Hate & Discrimination", fix: "Remove language targeting specific groups based on race, religion, gender, or other protected characteristics." },
+  violence_and_threats: { label: "Violence & Threats", fix: "Remove any references to physical harm, threats, or violent actions." },
+  dangerous_and_criminal_content: { label: "Dangerous & Criminal", fix: "Remove instructions related to illegal activities, fraud, or dangerous actions." },
+  selfharm: { label: "Self-Harm", fix: "Remove any references to self-harm or suicide." },
+  health: { label: "Health Advice", fix: "Remove unqualified medical or health advice." },
+  financial: { label: "Financial Advice", fix: "Remove specific investment recommendations or financial advice outside the credit analysis scope." },
+  pii: { label: "Personal Information (PII)", fix: "Remove personal identifiable information such as phone numbers, addresses, or ID numbers." },
+  law: { label: "Legal Advice", fix: "Remove specific legal counsel or recommendations." },
+};
+
 /* ── Markdown Renderer Component ───────────────────────────────── */
 
 // Helper to extract plain text from React children
@@ -1415,7 +1201,7 @@ function CustomTable({ children, primaryColor, secondaryColor, node, ...props }:
         const trs = React.Children.toArray(thead.props.children);
         const tr = trs.find((c: any) => React.isValidElement(c) && c.type === "tr") as any;
         if (tr && tr.props && tr.props.children) {
-          React.Children.forEach(tr.props.children, (th: any) => {
+          React.Children.forEach((tr.props as any).children, (th: any) => {
             headers.push(extractText(th).trim());
           });
         }
@@ -1425,7 +1211,7 @@ function CustomTable({ children, primaryColor, secondaryColor, node, ...props }:
         React.Children.forEach(tbody.props.children, (tr: any) => {
           if (!React.isValidElement(tr) || tr.type !== "tr" || !tr.props) return;
           const rowData: any = {};
-          React.Children.forEach(tr.props.children, (td: any, idx: number) => {
+          React.Children.forEach((tr.props as any).children, (td: any, idx: number) => {
             const valStr = extractText(td).trim();
             // Try to parse as number
             const numVal = Number(valStr.replace(/[^0-9.-]+/g, ""));
@@ -1853,3 +1639,302 @@ function ExportTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
     </div>
   );
 }
+
+/* ── Documents Tab ───────────────────────────────────────────── */
+
+function DocumentsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
+  const [showLibUpload, setShowLibUpload] = useState(false);
+  const [libUploadType, setLibUploadType] = useState<"file" | "url" | "text">("file");
+  const [libUploading, setLibUploading] = useState(false);
+  const [libUploadNote, setLibUploadNote] = useState("");
+  const [libUrlInput, setLibUrlInput] = useState("");
+  const [libTextInput, setLibTextInput] = useState("");
+  const [libSelectedFileName, setLibSelectedFileName] = useState("");
+  const [mcpDocs, setMcpDocs] = useState<Array<{ document_name: string; document_url: string; size?: number; type?: string }>>([]);
+  const [loadingMcpDocs, setLoadingMcpDocs] = useState(false);
+
+  useEffect(() => {
+    async function fetchMcpDocs() {
+      if (!deal.customer) return;
+      setLoadingMcpDocs(true);
+      try {
+        const docs = await api.companies.documents(deal.customer);
+        setMcpDocs(docs || []);
+      } catch (err) {
+        console.error("Failed to fetch MCP docs", err);
+      } finally {
+        setLoadingMcpDocs(false);
+      }
+    }
+    fetchMcpDocs();
+  }, [deal.customer]);
+
+  const handleLibUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (libUploading) return;
+    setLibUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("source_type", libUploadType);
+      if (libUploadNote) formData.append("note", libUploadNote);
+
+      if (libUploadType === "file") {
+        const fileInput = document.getElementById("lib-file-input") as HTMLInputElement;
+        if (!fileInput?.files?.[0]) return;
+        formData.append("file", fileInput.files[0]);
+      } else if (libUploadType === "url") {
+        formData.append("url", libUrlInput);
+      } else {
+        formData.append("text_content", libTextInput);
+      }
+
+      await api.library.upload(deal.id, formData);
+
+      setLibUploadNote("");
+      setLibUrlInput("");
+      setLibTextInput("");
+      setLibSelectedFileName("");
+      setShowLibUpload(false);
+      refresh();
+    } catch (err) {
+      console.error("Library upload failed:", err);
+    } finally {
+      setLibUploading(false);
+    }
+  };
+
+  const handleDeleteLibFile = async (fileId: string) => {
+    try {
+      await api.library.delete(deal.id, fileId);
+      refresh();
+    } catch (err) {
+      console.error("Delete library file failed:", err);
+    }
+  };
+
+  const libDocCount = deal.library_files?.length || 0;
+  
+  // Try to find matching library files for MCP docs to show status
+  const getMcpDocStatus = (filename: string) => {
+    return deal.library_files?.some(f => f.filename === filename || f.note?.includes(filename)) ? "In Library" : "Available";
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* ── Auto-Fetched from MCP ── */}
+      <div className="doc-card">
+        <div className="doc-section-header">
+          <Library className="h-4 w-4 shrink-0" />
+          <span>Auto-Fetched Documents (MCP)</span>
+        </div>
+        <div className="p-4">
+          <p className="text-sm text-muted-foreground mb-4">
+            These documents are automatically fetched from the company database for <strong>{deal.customer}</strong>.
+          </p>
+          {loadingMcpDocs ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" /> Loading documents...
+            </div>
+          ) : mcpDocs.length > 0 ? (
+            <ul className="divide-y border rounded-md">
+              {mcpDocs.map((doc, i) => (
+                <li key={i} className="flex items-center justify-between p-3 hover:bg-surface/50">
+                  <div className="flex items-center gap-3">
+                    <FileType className="h-5 w-5 text-blue-500" />
+                    <div>
+                      <div className="text-sm font-medium">{doc.document_name}</div>
+                      <div className="text-[10px] text-muted-foreground flex gap-2">
+                        <span>{doc.type || "Document"}</span>
+                        {doc.size && <span>{(doc.size / 1024).toFixed(0)} KB</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">
+                      {getMcpDocStatus(doc.document_name)}
+                    </span>
+                    <a href={doc.document_url} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">
+                      View
+                    </a>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="text-sm text-muted-foreground bg-muted/30 p-4 rounded-md text-center">
+              No auto-fetched documents found for {deal.customer}.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Manual Upload & Deal Library ── */}
+      <div className="doc-card">
+        <div className="doc-section-header justify-between">
+          <span className="flex items-center gap-2">
+            <Library className="h-4 w-4 shrink-0" />
+            Deal Document Library
+            {libDocCount > 0 && (
+              <span className="rounded-full bg-blue-500/20 text-blue-700 px-2 py-0.5 text-[10px] font-bold">
+                {libDocCount} file{libDocCount !== 1 ? "s" : ""}
+              </span>
+            )}
+          </span>
+          <button
+            onClick={() => setShowLibUpload(!showLibUpload)}
+            className={`inline-flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[11px] font-medium transition-colors ${
+              showLibUpload
+                ? "border-red-300/50 bg-red-500/20 text-white hover:bg-red-500/30"
+                : "border-primary-foreground/30 bg-primary-foreground/15 text-primary-foreground hover:bg-primary-foreground/25"
+            }`}
+          >
+            {showLibUpload ? <X className="h-3 w-3" /> : <Plus className="h-3 w-3" />}
+            {showLibUpload ? "Cancel" : "Add Document"}
+          </button>
+        </div>
+
+        <div className="px-4 py-2 bg-blue-50/50 border-b border-blue-100/50 flex items-center gap-2">
+          <Info className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+          <span className="text-[10px] text-blue-700">
+            All documents here are shared across every section. Each AI agent automatically searches this library for relevant data.
+          </span>
+        </div>
+
+        {showLibUpload && (
+          <div className="p-4 bg-surface/50 border-b space-y-3">
+            <form onSubmit={handleLibUpload} className="space-y-3">
+              <div className="flex gap-1 rounded-lg bg-muted p-0.5">
+                {[
+                  { type: "file" as const, label: "File", Icon: FileIcon },
+                  { type: "url" as const, label: "URL", Icon: LinkIcon },
+                  { type: "text" as const, label: "Text", Icon: Type },
+                ].map(({ type, label, Icon }) => (
+                  <button
+                    key={type}
+                    type="button"
+                    onClick={() => setLibUploadType(type)}
+                    className={`flex-1 inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                      libUploadType === type
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    <Icon className="h-3 w-3" /> {label}
+                  </button>
+                ))}
+              </div>
+
+              {libUploadType === "file" && (
+                <div className="relative rounded-lg border-2 border-dashed border-muted-foreground/30 bg-muted/20 p-6 text-center hover:bg-muted/40 hover:border-primary/40 transition-colors cursor-pointer">
+                  <input
+                    type="file"
+                    id="lib-file-input"
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                    accept=".pdf,.docx,.doc,.xlsx,.xls,.pptx,.csv,.txt,.md,.json"
+                    onChange={(e) => setLibSelectedFileName(e.target.files?.[0]?.name || "")}
+                  />
+                  <FileIcon className={`h-8 w-8 mx-auto mb-3 ${libSelectedFileName ? 'text-primary' : 'text-muted-foreground/60'}`} />
+                  {libSelectedFileName ? (
+                    <div className="text-sm font-semibold text-primary break-all px-4">{libSelectedFileName}</div>
+                  ) : (
+                    <>
+                      <div className="text-sm font-medium text-foreground mb-1">Click to browse or drag and drop</div>
+                      <div className="text-[10px] text-muted-foreground">PDF, DOCX, XLSX, PPTX, CSV, TXT, MD</div>
+                    </>
+                  )}
+                </div>
+              )}
+              {libUploadType === "url" && (
+                <input
+                  placeholder="https://example.com/document.pdf"
+                  value={libUrlInput}
+                  onChange={e => setLibUrlInput(e.target.value)}
+                  className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                />
+              )}
+              {libUploadType === "text" && (
+                <textarea
+                  placeholder="Paste document content here…"
+                  value={libTextInput}
+                  onChange={e => setLibTextInput(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                />
+              )}
+
+              <div className="flex gap-2">
+                <input
+                  placeholder="Note (optional)"
+                  value={libUploadNote}
+                  onChange={e => setLibUploadNote(e.target.value)}
+                  className="flex-1 h-9 rounded-md border border-input bg-transparent px-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                />
+                <button
+                  type="submit"
+                  disabled={libUploading}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
+                >
+                  {libUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                  Upload to Library
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {libDocCount > 0 ? (
+          <ul className="divide-y">
+            {deal.library_files.map(lf => {
+              const typeConfig: Record<string, { color: string; icon: string }> = {
+                file: { color: "bg-blue-100 text-blue-700 border-blue-200", icon: "📄" },
+                url: { color: "bg-green-100 text-green-700 border-green-200", icon: "🔗" },
+                text: { color: "bg-orange-100 text-orange-700 border-orange-200", icon: "📝" },
+                mcp_auto: { color: "bg-emerald-100 text-emerald-700 border-emerald-200", icon: "🤖" },
+              };
+              const cfg = typeConfig[lf.source_type] || typeConfig.file;
+              const sizeStr = lf.file_size ? `${(lf.file_size / 1024).toFixed(0)} KB` : "";
+
+              return (
+                <li key={lf.id} className="flex items-center justify-between px-4 py-2.5 hover:bg-surface/50 transition-colors group">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-bold uppercase shrink-0 ${cfg.color}`}>
+                      {cfg.icon} {lf.source_type === "mcp_auto" ? "MCP" : lf.source_type}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium truncate">
+                        {lf.filename}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground flex gap-2 items-center">
+                        <span className="text-emerald-600 font-semibold">⚡ Mistral Library</span>
+                        {sizeStr && <span>{sizeStr}</span>}
+                        {lf.note && <span className="truncate max-w-[150px]">• {lf.note}</span>}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleDeleteLibFile(lf.id)}
+                    className="rounded-md p-1.5 text-muted-foreground opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-all"
+                    title="Remove from library"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : !showLibUpload ? (
+          <div className="px-4 py-6 text-center">
+            <Library className="h-6 w-6 mx-auto mb-2 text-muted-foreground/40" />
+            <div className="text-xs text-muted-foreground">
+              No documents in the library yet.
+            </div>
+            <div className="text-[10px] text-muted-foreground/60 mt-1">
+              Upload files to enable AI agents to use real data for grounding.
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+

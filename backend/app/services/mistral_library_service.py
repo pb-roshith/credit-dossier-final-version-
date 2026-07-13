@@ -246,6 +246,72 @@ class MistralLibraryService:
             db.add(ma)
         
         db.commit()
+        # --- Create Orchestration Agent and MCP Connector ---
+        try:
+            # 1. Create connector
+            existing_conn = db.query(MistralAgent).filter(MistralAgent.section_key == "mcp_connector").first()
+            if existing_conn:
+                mcp_connector_id = existing_conn.agent_id
+            else:
+                try:
+                    mcp_connector = await client.beta.connectors.create_async(
+                        name="company_doc_mcp",
+                        description="MCP Server for Company Documents",
+                        server="https://companydocmcpserver-production.up.railway.app/sse",
+                        visibility="shared_workspace"
+                    )
+                    mcp_connector_id = mcp_connector.id
+                    logger.info(f"Created MCP Connector: {mcp_connector_id}")
+                except Exception as e:
+                    if "Already have connector" in str(e) or "409" in str(e):
+                        logger.info("Connector company_doc_mcp already exists. Using name.")
+                        mcp_connector_id = "company_doc_mcp"
+                    else:
+                        raise
+                
+                # Save connector ID
+                try:
+                    ma_connector = MistralAgent(section_key="mcp_connector", agent_id=mcp_connector_id)
+                    db.add(ma_connector)
+                    db.commit()
+                except Exception as e:
+                    db.rollback()
+                    logger.info("Connector already saved to DB by another process.")
+            
+            # 2. Create Orchestration Agent
+            existing_orch = db.query(MistralAgent).filter(MistralAgent.section_key == "orchestration").first()
+            if existing_orch:
+                orch_agent_id = existing_orch.agent_id
+            else:
+                instructions = (
+                    "You are an Orchestration Agent for a Credit Dossier. "
+                    "Your role is to formulate a document strategy before generating a narrative. "
+                    "Use the retrieve_company_document_summaries tool to see what documents are available, "
+                    "and output a brief strategy on which documents should be prioritized."
+                )
+                orch_agent = await client.beta.agents.create_async(
+                    model=settings.MISTRAL_AGENT_MODEL,
+                    name="GlobalAgent_Orchestration",
+                    instructions=instructions,
+                    completion_args={"temperature": 0.1}
+                )
+                # Update Orchestration agent to use the connector
+                await client.beta.agents.update_async(
+                    agent_id=orch_agent.id,
+                    tools=[{"type": "connector", "connector_id": mcp_connector_id}]
+                )
+                logger.info(f"Created Orchestration Agent: {orch_agent.id}")
+                
+                try:
+                    ma_orch = MistralAgent(section_key="orchestration", agent_id=orch_agent.id)
+                    db.add(ma_orch)
+                    db.commit()
+                except Exception as e:
+                    db.rollback()
+                    logger.info("Orchestration agent already saved to DB by another process.")
+        except Exception as e:
+            logger.error(f"Failed to create MCP Connector or Orchestration Agent: {e}")
+
         logger.info("Global Mistral agents initialized.")
 
     @staticmethod
@@ -257,9 +323,12 @@ class MistralLibraryService:
         
         for ma in agents:
             try:
-                await client.beta.agents.delete_async(agent_id=ma.agent_id)
+                if ma.section_key == "mcp_connector":
+                    await client.beta.connectors.delete_async(connector_id=ma.agent_id)
+                else:
+                    await client.beta.agents.delete_async(agent_id=ma.agent_id)
             except Exception as e:
-                logger.warning(f"Failed to delete global agent {ma.agent_id}: {e}")
+                logger.warning(f"Failed to delete global agent/connector {ma.agent_id}: {e}")
             db.delete(ma)
             
         db.commit()
@@ -272,7 +341,8 @@ class MistralLibraryService:
             return
 
         client = _get_client()
-        agents = db.query(MistralAgent).all()
+        # Fetch all agents except the MCP connector, which is not an agent
+        agents = db.query(MistralAgent).filter(MistralAgent.section_key != "mcp_connector").all()
         
         logger.info(f"Syncing {len(agents)} global agents to library {library_id}...")
 
@@ -358,6 +428,45 @@ class MistralLibraryService:
             "\nSearch the document library for relevant data, "
             "then generate the narrative. Use markdown formatting."
         )
+        
+        # --- ORCHESTRATION AGENT CALL ---
+        from app.database import SessionLocal
+        db = SessionLocal()
+        try:
+            orch_agent_id = MistralLibraryService.get_global_agent_id(db, "orchestration")
+            
+            from app.services.mcp_service import MCPClientService
+            has_manual_docs = len(deal.library_files) > 0
+            if not MCPClientService.is_connected and not has_manual_docs:
+                raise ValueError("MCP server is down and no manual documents are available. Cannot generate narrative.")
+
+            if orch_agent_id:
+                logger.info(f"Running Orchestration Agent {orch_agent_id} for {deal.customer}")
+                orch_messages = [
+                    {"role": "user", "content": f"Formulate a document strategy for the section: {section_title} for the company: {deal.customer}. Use the tool to retrieve summaries."}
+                ]
+                try:
+                    orch_resp = await _call_with_retry(
+                        lambda: client.beta.conversations.start_async(
+                            agent_id=orch_agent_id,
+                            inputs=orch_messages
+                        ),
+                        description="Orchestration Agent completion"
+                    )
+                    
+                    strategy = ""
+                    for output in orch_resp.outputs:
+                        if getattr(output, "type", None) == "message.output":
+                            strategy = output.content
+                        
+                    if strategy:
+                        logger.info("Orchestration strategy generated.")
+                        user_parts.append(f"\n--- Orchestration Strategy ---\n{strategy}\n---\nUse this strategy to guide your document search.")
+                except Exception as e:
+                    logger.warning(f"Orchestration Agent failed (ignoring strategy): {e}")
+        finally:
+            db.close()
+        # --- END ORCHESTRATION ---
 
         messages = [
             {"role": "user", "content": "\n".join(user_parts)},
