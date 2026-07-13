@@ -18,6 +18,8 @@ class NarrativeResponse(BaseModel):
     state: str
     accuracy_score: Optional[float] = None
     accuracy_details: Optional[dict] = None
+    orchestration_strategy: Optional[str] = None
+    timing: Optional[dict] = None
 
 
 class DraftAllResponse(BaseModel):

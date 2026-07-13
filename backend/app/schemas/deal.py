@@ -59,6 +59,21 @@ class LibraryFileResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+# ── Library Sync Log ───────────────────────────────────────────
+class LibrarySyncLogResponse(BaseModel):
+    id: str
+    doc_title: str
+    doc_url: Optional[str] = None
+    status: str
+    error: Optional[str] = None
+    file_size: Optional[int] = None
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
 # ── Section ─────────────────────────────────────────────────────
 class SectionResponse(BaseModel):
     id: str
@@ -190,6 +205,7 @@ class DealResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     mistral_library_id: Optional[str] = None
+    library_sync_status: str
     primary_color: str
     secondary_color: str
     theme_palette: list[str] = []
@@ -197,6 +213,7 @@ class DealResponse(BaseModel):
     sections: list[SectionResponse] = []
     documents: list[DealDocumentResponse] = []  # Deal-level documents (legacy)
     library_files: list[LibraryFileResponse] = []  # Mistral Library files
+    sync_logs: list[LibrarySyncLogResponse] = []
     audit_entries: list[AuditEntryResponse] = []
     versions: list[VersionResponse] = []
 
@@ -234,6 +251,7 @@ class DealListResponse(BaseModel):
     due: str
     owner: str
     status: str
+    library_sync_status: str = "not_started"
     created_at: datetime
     updated_at: datetime
     sections_ready: int = 0

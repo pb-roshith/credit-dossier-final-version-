@@ -46,6 +46,8 @@ class Deal(Base):
 
     # Mistral Document Library (managed RAG)
     mistral_library_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    library_sync_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_started")
+
 
     # Theme
     primary_color: Mapped[str] = mapped_column(String(16), nullable=False, default="#002060")
@@ -74,6 +76,9 @@ class Deal(Base):
 
     library_files: Mapped[list["LibraryFile"]] = relationship(  # type: ignore[name-defined]
         back_populates="deal", cascade="all, delete-orphan", order_by="LibraryFile.created_at",
+    )
+    sync_logs: Mapped[list["LibrarySyncLog"]] = relationship(  # type: ignore[name-defined]
+        back_populates="deal", cascade="all, delete-orphan", order_by="LibrarySyncLog.created_at"
     )
 
 

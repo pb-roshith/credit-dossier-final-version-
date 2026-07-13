@@ -221,11 +221,13 @@ class MistralLibraryService:
 
     @staticmethod
     async def initialize_global_agents(db: Session) -> None:
-        """Create the 16 global agents on startup if they don't exist."""
+        """Create the 16 section agents + 1 orchestration agent on startup."""
         client = _get_client()
         from app.services.deal_service import DEFAULT_SECTIONS
 
         logger.info("Initializing global Mistral agents...")
+
+        # ── Create 16 section-specific agents ────────────────────
         for sec_def in DEFAULT_SECTIONS:
             section_key = sec_def["section_key"]
             section_title = sec_def["title"]
@@ -244,73 +246,35 @@ class MistralLibraryService:
             
             ma = MistralAgent(section_key=section_key, agent_id=agent.id)
             db.add(ma)
+            logger.info(f"Created section agent: {section_title} ({agent.id})")
         
         db.commit()
-        # --- Create Orchestration Agent and MCP Connector ---
+
+        # ── Create orchestration agent (fixed system prompt, dynamic user prompt) ──
         try:
-            # 1. Create connector
-            existing_conn = db.query(MistralAgent).filter(MistralAgent.section_key == "mcp_connector").first()
-            if existing_conn:
-                mcp_connector_id = existing_conn.agent_id
-            else:
-                try:
-                    mcp_connector = await client.beta.connectors.create_async(
-                        name="company_doc_mcp",
-                        description="MCP Server for Company Documents",
-                        server="https://companydocmcpserver-production.up.railway.app/sse",
-                        visibility="shared_workspace"
-                    )
-                    mcp_connector_id = mcp_connector.id
-                    logger.info(f"Created MCP Connector: {mcp_connector_id}")
-                except Exception as e:
-                    if "Already have connector" in str(e) or "409" in str(e):
-                        logger.info("Connector company_doc_mcp already exists. Using name.")
-                        mcp_connector_id = "company_doc_mcp"
-                    else:
-                        raise
-                
-                # Save connector ID
-                try:
-                    ma_connector = MistralAgent(section_key="mcp_connector", agent_id=mcp_connector_id)
-                    db.add(ma_connector)
-                    db.commit()
-                except Exception as e:
-                    db.rollback()
-                    logger.info("Connector already saved to DB by another process.")
-            
-            # 2. Create Orchestration Agent
-            existing_orch = db.query(MistralAgent).filter(MistralAgent.section_key == "orchestration").first()
-            if existing_orch:
-                orch_agent_id = existing_orch.agent_id
-            else:
-                instructions = (
-                    "You are an Orchestration Agent for a Credit Dossier. "
-                    "Your role is to formulate a document strategy before generating a narrative. "
-                    "Use the retrieve_company_document_summaries tool to see what documents are available, "
-                    "and output a brief strategy on which documents should be prioritized."
-                )
+            existing_orch = db.query(MistralAgent).filter(
+                MistralAgent.section_key == "orchestration"
+            ).first()
+
+            if not existing_orch:
+                from app.agents.orchestration_prompts import ORCHESTRATION_SYSTEM_PROMPT
+
                 orch_agent = await client.beta.agents.create_async(
                     model=settings.MISTRAL_AGENT_MODEL,
                     name="GlobalAgent_Orchestration",
-                    instructions=instructions,
-                    completion_args={"temperature": 0.1}
+                    instructions=ORCHESTRATION_SYSTEM_PROMPT,
+                    completion_args={"temperature": 0.1},
                 )
-                # Update Orchestration agent to use the connector
-                await client.beta.agents.update_async(
-                    agent_id=orch_agent.id,
-                    tools=[{"type": "connector", "connector_id": mcp_connector_id}]
+                ma_orch = MistralAgent(
+                    section_key="orchestration", agent_id=orch_agent.id
                 )
-                logger.info(f"Created Orchestration Agent: {orch_agent.id}")
-                
-                try:
-                    ma_orch = MistralAgent(section_key="orchestration", agent_id=orch_agent.id)
-                    db.add(ma_orch)
-                    db.commit()
-                except Exception as e:
-                    db.rollback()
-                    logger.info("Orchestration agent already saved to DB by another process.")
+                db.add(ma_orch)
+                db.commit()
+                logger.info(f"Created orchestration agent: {orch_agent.id}")
+            else:
+                logger.info(f"Orchestration agent already exists: {existing_orch.agent_id}")
         except Exception as e:
-            logger.error(f"Failed to create MCP Connector or Orchestration Agent: {e}")
+            logger.error(f"Failed to create orchestration agent: {e}")
 
         logger.info("Global Mistral agents initialized.")
 
@@ -372,7 +336,8 @@ class MistralLibraryService:
         section_title: str,
         section_description: str,
         expected_output: str,
-        deal: Deal,
+        deal_context: str,
+        orchestration_strategy: str | None = None,
         custom_instructions: str | None = None,
         output_template: str | None = None,
     ) -> str:
@@ -380,35 +345,36 @@ class MistralLibraryService:
         Generate narrative content using a Mistral Agent.
         The agent has document_library tool access for RAG.
 
-        Returns the generated content string.
+        Args:
+            agent_id: Mistral Agent ID for this section
+            section_title: Human-readable section title
+            section_description: What the section covers
+            expected_output: What the output should look like
+            deal_context: Pre-built, section-specific deal context string
+            orchestration_strategy: Strategy text from OrchestrationService
+            custom_instructions: User-provided style/structure instructions
+            output_template: User-provided markdown template
+
+        Returns:
+            Generated content string (markdown)
         """
         client = _get_client()
-        
-        deal_ctx = (
-            f"\n\n--- Deal Context ---\n"
-            f"Customer: {deal.customer}\n"
-            f"Customer Type: {deal.customer_type}\n"
-            f"Industry: {deal.industry}\n"
-            f"Segment: {deal.segment}\n"
-            f"Geography: {deal.geography}\n"
-            f"Facility Type: {deal.facility}\n"
-            f"Currency: {deal.currency}\n"
-            f"Amount: {deal.currency} {deal.amount:,.0f}\n"
-            f"Tenure: {deal.tenure} months\n"
-            f"Pricing: {deal.pricing}\n"
-            f"Repayment: {deal.repayment}\n"
-            f"Collateral: {'Secured' if deal.collateral else 'Clean/Unsecured'}\n"
-            f"KYC Status: {deal.kyc}\n"
-            f"---"
-        )
 
         # Build the user message
         user_parts = [
-            deal_ctx,
+            deal_context,
             f"Section: {section_title}",
             f"Description: {section_description}",
             f"Expected Output: {expected_output}",
         ]
+
+        # Inject orchestration strategy (from OrchestrationService)
+        if orchestration_strategy and orchestration_strategy.strip():
+            user_parts.append(
+                f"\n--- Orchestration Strategy (use to guide your search) ---\n"
+                f"{orchestration_strategy}\n---\n"
+                f"Prioritize the recommended documents and data points above."
+            )
 
         if custom_instructions and custom_instructions.strip():
             user_parts.append(
@@ -428,45 +394,6 @@ class MistralLibraryService:
             "\nSearch the document library for relevant data, "
             "then generate the narrative. Use markdown formatting."
         )
-        
-        # --- ORCHESTRATION AGENT CALL ---
-        from app.database import SessionLocal
-        db = SessionLocal()
-        try:
-            orch_agent_id = MistralLibraryService.get_global_agent_id(db, "orchestration")
-            
-            from app.services.mcp_service import MCPClientService
-            has_manual_docs = len(deal.library_files) > 0
-            if not MCPClientService.is_connected and not has_manual_docs:
-                raise ValueError("MCP server is down and no manual documents are available. Cannot generate narrative.")
-
-            if orch_agent_id:
-                logger.info(f"Running Orchestration Agent {orch_agent_id} for {deal.customer}")
-                orch_messages = [
-                    {"role": "user", "content": f"Formulate a document strategy for the section: {section_title} for the company: {deal.customer}. Use the tool to retrieve summaries."}
-                ]
-                try:
-                    orch_resp = await _call_with_retry(
-                        lambda: client.beta.conversations.start_async(
-                            agent_id=orch_agent_id,
-                            inputs=orch_messages
-                        ),
-                        description="Orchestration Agent completion"
-                    )
-                    
-                    strategy = ""
-                    for output in orch_resp.outputs:
-                        if getattr(output, "type", None) == "message.output":
-                            strategy = output.content
-                        
-                    if strategy:
-                        logger.info("Orchestration strategy generated.")
-                        user_parts.append(f"\n--- Orchestration Strategy ---\n{strategy}\n---\nUse this strategy to guide your document search.")
-                except Exception as e:
-                    logger.warning(f"Orchestration Agent failed (ignoring strategy): {e}")
-        finally:
-            db.close()
-        # --- END ORCHESTRATION ---
 
         messages = [
             {"role": "user", "content": "\n".join(user_parts)},
@@ -510,25 +437,19 @@ class MistralLibraryService:
 
             # Normalize content — Mistral may return a list of content blocks
             if isinstance(content, list):
-                # Join text parts; each element may be a dict with a "text" key or a plain string
                 parts = []
                 for part in content:
                     if isinstance(part, str):
                         parts.append(part)
-                    elif isinstance(part, dict) and "text" in part:
+                    elif isinstance(part, dict) and part.get("type", "text") == "text" and "text" in part:
                         parts.append(part["text"])
-                    elif hasattr(part, "text"):
+                    elif getattr(part, "type", "text") == "text" and hasattr(part, "text"):
                         parts.append(part.text)
-                    else:
-                        parts.append(str(part))
                 content = "\n".join(parts)
 
             # Strip common preambles/search logs that Mistral sometimes outputs
             import re
-            # Remove "Searching [xyz] for: ..." lines at the start. 
-            # We match up to the first double newline, or heading, or bold text.
             content = re.sub(r'^Searching\s*\[.*?\].*?(?=\n\n|\n#|\n\*\*|$)', '', content, flags=re.IGNORECASE|re.DOTALL)
-            # Remove "Here is the [xyz] section..." lines at the start
             content = re.sub(r'^\s*Here is the.*?based on the available documents:?\s*\n*', '', content, flags=re.IGNORECASE)
             
             content = content.strip()

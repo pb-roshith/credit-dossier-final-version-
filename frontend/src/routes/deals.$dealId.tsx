@@ -400,11 +400,25 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const isFlagged = active.moderation_status === "flagged";
   const isModerationSafe = active.moderation_status === "safe";
   const flaggedCategories = active.moderation_details?.flagged_categories || [];
+  const isSyncing = deal.library_sync_status === "syncing";
 
   return (
     <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
       {/* ── Left Panel: Section List ── */}
       <div className="space-y-3">
+        {/* Syncing Banner */}
+        {isSyncing && (
+          <div className="rounded-md bg-blue-50 border border-blue-200 p-3">
+            <div className="flex items-center gap-2 text-blue-700">
+              <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+              <div className="text-xs font-medium">Library sync in progress...</div>
+            </div>
+            <p className="text-[10px] text-blue-600 mt-1 leading-relaxed">
+              Documents are being uploaded to the Mistral Library. Generation is paused until sync completes.
+            </p>
+          </div>
+        )}
+
         {/* Draft All Card */}
         <div className="doc-card">
           <div className="p-3">
@@ -425,7 +439,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
             <div className="flex gap-2 mt-3">
               <button
                 onClick={handleDraftAll}
-                disabled={draftingAll || draftingSelected}
+                disabled={draftingAll || draftingSelected || isSyncing}
                 className="flex-1 inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary/10 px-3 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-60 transition-colors"
               >
                 {draftingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
@@ -433,7 +447,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               </button>
               <button
                 onClick={handleDraftSelected}
-                disabled={draftingAll || draftingSelected || selectedSectionIds.size === 0}
+                disabled={draftingAll || draftingSelected || selectedSectionIds.size === 0 || isSyncing}
                 className="flex-1 inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-60 transition-colors"
               >
                 {draftingSelected ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
@@ -756,12 +770,12 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               )}
               <button
                 onClick={handleGenerate}
-                disabled={generating || editingContent || isFlagged}
-                title={isFlagged ? `Blocked: content flagged (${flaggedCategories.join(", ")})` : undefined}
+                disabled={generating || editingContent || isFlagged || isSyncing}
+                title={isFlagged ? `Blocked: content flagged (${flaggedCategories.join(", ")})` : isSyncing ? "Blocked: Library sync in progress" : undefined}
                 className="inline-flex h-7 items-center gap-1 rounded-md border border-primary-foreground/30 bg-primary-foreground/10 px-2 text-xs font-medium disabled:opacity-60 hover:bg-primary-foreground/20 transition-colors"
               >
                 {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : isFlagged ? <ShieldAlert className="h-3.5 w-3.5" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                {generating ? "Generating…" : isFlagged ? "Blocked" : "Generate"}
+                {generating ? "Generating…" : isFlagged ? "Blocked" : isSyncing ? "Syncing..." : "Generate"}
               </button>
             </div>
           </div>
@@ -892,6 +906,8 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               </div>
               {/* Accuracy Panel */}
               <AccuracyPanel section={active} />
+              {/* Orchestration Panel */}
+              <OrchestrationPanel section={active} />
               {/* Rendered markdown content */}
               <div className="narrative-prose px-6 py-5">
                 {editingContent ? (
@@ -914,7 +930,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                     </div>
                   </div>
                 ) : (
-                  <MarkdownRenderer content={active.generated_content} primaryColor={deal.primary_color} secondaryColor={deal.secondary_color} />
+                  <MarkdownRenderer content={active.generated_content} primaryColor={deal.primary_color} secondaryColor={deal.secondary_color} documents={deal.documents} />
                 )}
               </div>
             </div>
@@ -931,20 +947,25 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               </div>
               <button
                 onClick={handleGenerate}
-                disabled={generating || isFlagged}
-                title={isFlagged ? `Blocked: content flagged (${flaggedCategories.join(", ")})` : undefined}
+                disabled={generating || isFlagged || isSyncing}
+                title={isFlagged ? `Blocked: content flagged (${flaggedCategories.join(", ")})` : isSyncing ? "Blocked: Library sync in progress" : undefined}
                 className={`inline-flex h-10 items-center gap-2 rounded-md px-5 text-sm font-medium shadow disabled:opacity-60 transition-colors ${
-                  isFlagged
+                  isFlagged || isSyncing
                     ? "bg-red-600 text-white hover:bg-red-700"
                     : "bg-primary text-primary-foreground hover:bg-primary/90"
                 }`}
               >
-                {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : isFlagged ? <ShieldAlert className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
-                {generating ? "Generating…" : isFlagged ? "Generation Blocked" : "Generate Draft"}
+                {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : (isFlagged || isSyncing) ? <ShieldAlert className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+                {generating ? "Generating…" : isFlagged ? "Generation Blocked" : isSyncing ? "Syncing Documents..." : "Generate Draft"}
               </button>
               {isFlagged && (
                 <p className="text-xs text-red-600 mt-2 max-w-sm">
                   Edit your custom instructions or output template to resolve moderation flags.
+                </p>
+              )}
+              {isSyncing && !isFlagged && (
+                <p className="text-xs text-red-600 mt-2 max-w-sm">
+                  Please wait until all documents are uploaded to the library before generating.
                 </p>
               )}
             </div>
@@ -1156,6 +1177,48 @@ function AccuracyPanel({ section }: { section: Section }) {
   );
 }
 
+/* ── Orchestration Panel Component ───────────────────────────── */
+
+function OrchestrationPanel({ section }: { section: Section }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (!section.orchestration_strategy) {
+    return null;
+  }
+
+  const timing = section.timing;
+  const timingStr = timing ? `(Orch: ${timing.orchestration_ms}ms, Gen: ${timing.generation_ms}ms)` : "";
+
+  return (
+    <div className="border-b border-blue-100 bg-blue-50/30 transition-all duration-300">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center justify-between px-5 py-2 hover:bg-blue-50/60 transition-all"
+      >
+        <div className="flex items-center gap-2">
+          <RefreshCw className="h-3.5 w-3.5 text-blue-500" />
+          <span className="text-xs font-semibold text-blue-700">
+            Orchestration Strategy {timingStr}
+          </span>
+        </div>
+        <div className="text-blue-500">
+          {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="px-5 pb-4 pt-1 animate-in slide-in-from-top-1 duration-200">
+          <div className="rounded-md bg-white/80 border border-blue-200 p-3">
+            <pre className="text-[10px] text-blue-900 whitespace-pre-wrap font-mono overflow-y-auto max-h-[300px]">
+              {section.orchestration_strategy}
+            </pre>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 import React from "react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend
@@ -1298,7 +1361,7 @@ function CustomTable({ children, primaryColor, secondaryColor, node, ...props }:
 }
 
 
-function MarkdownRenderer({ content, primaryColor, secondaryColor }: { content: string, primaryColor?: string, secondaryColor?: string }) {
+function MarkdownRenderer({ content, primaryColor, secondaryColor, documents }: { content: string, primaryColor?: string, secondaryColor?: string, documents?: DealDocument[] }) {
   // Lazy import react-markdown
   const [ReactMarkdown, setReactMarkdown] = useState<any>(null);
   const [remarkGfm, setRemarkGfm] = useState<any>(null);
@@ -1313,19 +1376,31 @@ function MarkdownRenderer({ content, primaryColor, secondaryColor }: { content: 
     });
   }, []);
 
+  let processedContent = content;
+  if (documents && documents.length > 0) {
+    processedContent = processedContent.replace(/\[\[(.*?)\]\]/g, (match, filename) => {
+      const doc = documents.find(d => d.filename === filename);
+      if (doc && doc.url) {
+        return `[${filename}](${doc.url})`;
+      }
+      return match;
+    });
+  }
+
   if (!ReactMarkdown) {
     // Fallback: show pre-formatted text while markdown loads
-    return <div className="whitespace-pre-wrap text-sm leading-relaxed">{content}</div>;
+    return <div className="whitespace-pre-wrap text-sm leading-relaxed">{processedContent}</div>;
   }
 
   return (
     <ReactMarkdown 
       remarkPlugins={remarkGfm ? [remarkGfm] : []}
       components={{
-        table: (props: any) => <CustomTable {...props} primaryColor={primaryColor} secondaryColor={secondaryColor} />
+        table: (props: any) => <CustomTable {...props} primaryColor={primaryColor} secondaryColor={secondaryColor} />,
+        a: (props: any) => <a {...props} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline hover:text-blue-800" />
       }}
     >
-      {content}
+      {processedContent}
     </ReactMarkdown>
   );
 }
@@ -1650,24 +1725,29 @@ function DocumentsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const [libUrlInput, setLibUrlInput] = useState("");
   const [libTextInput, setLibTextInput] = useState("");
   const [libSelectedFileName, setLibSelectedFileName] = useState("");
-  const [mcpDocs, setMcpDocs] = useState<Array<{ document_name: string; document_url: string; size?: number; type?: string }>>([]);
-  const [loadingMcpDocs, setLoadingMcpDocs] = useState(false);
+  const [triggeringSync, setTriggeringSync] = useState(false);
 
+  // Poll for updates if sync is in progress
   useEffect(() => {
-    async function fetchMcpDocs() {
-      if (!deal.customer) return;
-      setLoadingMcpDocs(true);
-      try {
-        const docs = await api.companies.documents(deal.customer);
-        setMcpDocs(docs || []);
-      } catch (err) {
-        console.error("Failed to fetch MCP docs", err);
-      } finally {
-        setLoadingMcpDocs(false);
-      }
+    if (deal.library_sync_status !== "syncing") return;
+    const interval = setInterval(() => {
+      refresh();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [deal.library_sync_status, refresh]);
+
+  const handleTriggerSync = async () => {
+    if (triggeringSync) return;
+    setTriggeringSync(true);
+    try {
+      await api.library.triggerSync(deal.id);
+      refresh();
+    } catch (err) {
+      console.error("Failed to trigger sync:", err);
+    } finally {
+      setTriggeringSync(false);
     }
-    fetchMcpDocs();
-  }, [deal.customer]);
+  };
 
   const handleLibUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1721,48 +1801,68 @@ function DocumentsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
 
   return (
     <div className="space-y-6">
-      {/* ── Auto-Fetched from MCP ── */}
+      {/* ── Auto-Fetched from MCP (Timeline) ── */}
       <div className="doc-card">
-        <div className="doc-section-header">
-          <Library className="h-4 w-4 shrink-0" />
-          <span>Auto-Fetched Documents (MCP)</span>
+        <div className="doc-section-header justify-between">
+          <div className="flex items-center gap-2">
+            <Library className="h-4 w-4 shrink-0" />
+            <span>MCP Sync Timeline</span>
+          </div>
+          <button
+            onClick={handleTriggerSync}
+            disabled={triggeringSync || deal.library_sync_status === "syncing"}
+            className="inline-flex h-6 items-center gap-1.5 rounded bg-primary/10 px-2 text-[11px] font-medium text-primary hover:bg-primary/20 disabled:opacity-50 transition-colors"
+          >
+            {(triggeringSync || deal.library_sync_status === "syncing") ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+            {deal.library_sync_status === "syncing" ? "Syncing..." : "Sync Now"}
+          </button>
         </div>
         <div className="p-4">
           <p className="text-sm text-muted-foreground mb-4">
-            These documents are automatically fetched from the company database for <strong>{deal.customer}</strong>.
+            Documents automatically fetched from the company database for <strong>{deal.customer}</strong>.
           </p>
-          {loadingMcpDocs ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading documents...
-            </div>
-          ) : mcpDocs.length > 0 ? (
-            <ul className="divide-y border rounded-md">
-              {mcpDocs.map((doc, i) => (
-                <li key={i} className="flex items-center justify-between p-3 hover:bg-surface/50">
-                  <div className="flex items-center gap-3">
-                    <FileType className="h-5 w-5 text-blue-500" />
-                    <div>
-                      <div className="text-sm font-medium">{doc.document_name}</div>
-                      <div className="text-[10px] text-muted-foreground flex gap-2">
-                        <span>{doc.type || "Document"}</span>
-                        {doc.size && <span>{(doc.size / 1024).toFixed(0)} KB</span>}
+
+          {deal.sync_logs && deal.sync_logs.length > 0 ? (
+            <div className="space-y-3">
+              {deal.sync_logs.map((log) => {
+                let statusConfig = { icon: "⏳", color: "text-slate-500", bg: "bg-slate-100", label: "Queued" };
+                if (log.status === "downloading") statusConfig = { icon: "⬇️", color: "text-blue-600", bg: "bg-blue-50", label: "Downloading from MCP..." };
+                if (log.status === "uploading") statusConfig = { icon: "⬆️", color: "text-indigo-600", bg: "bg-indigo-50", label: "Uploading to Mistral Library..." };
+                if (log.status === "completed") statusConfig = { icon: "✅", color: "text-emerald-600", bg: "bg-emerald-50", label: "Completed" };
+                if (log.status === "failed") statusConfig = { icon: "❌", color: "text-red-600", bg: "bg-red-50", label: "Failed" };
+
+                return (
+                  <div key={log.id} className={`flex items-start gap-3 rounded-lg border p-3 transition-colors ${statusConfig.bg}`}>
+                    <div className="flex items-center justify-center h-6 w-6 rounded-full bg-white shadow-sm shrink-0 mt-0.5 text-xs">
+                      {statusConfig.icon}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="text-sm font-semibold truncate">{log.doc_title}</div>
+                        <div className={`text-[10px] font-bold uppercase tracking-wider ${statusConfig.color} shrink-0`}>
+                          {statusConfig.label}
+                        </div>
                       </div>
+                      <div className="text-[10px] text-muted-foreground flex items-center gap-3 mt-1">
+                        {log.file_size && <span>{(log.file_size / 1024).toFixed(0)} KB</span>}
+                        <span>Queued: {new Date(log.created_at).toLocaleTimeString()}</span>
+                        {log.completed_at && <span>Finished: {new Date(log.completed_at).toLocaleTimeString()}</span>}
+                      </div>
+                      {log.error && (
+                        <div className="text-xs text-red-600 mt-2 bg-red-100/50 p-2 rounded border border-red-200">
+                          {log.error}
+                        </div>
+                      )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-medium">
-                      {getMcpDocStatus(doc.document_name)}
-                    </span>
-                    <a href={doc.document_url} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">
-                      View
-                    </a>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                );
+              })}
+            </div>
           ) : (
-            <div className="text-sm text-muted-foreground bg-muted/30 p-4 rounded-md text-center">
-              No auto-fetched documents found for {deal.customer}.
+            <div className="text-sm text-muted-foreground bg-muted/30 p-6 rounded-lg text-center border border-dashed">
+              <Library className="h-8 w-8 mx-auto mb-2 text-muted-foreground/40" />
+              <div>No sync history for {deal.customer}.</div>
+              <div className="text-[10px] mt-1">Click "Sync Now" to check for documents on the MCP server.</div>
             </div>
           )}
         </div>

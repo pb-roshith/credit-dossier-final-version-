@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.config import settings
 from app.database import engine, Base
 from app.models import Deal, Section, AuditEntry, Version, Upload  # noqa: F401
 from app.models import DealDocument, SectionDocumentLink  # noqa: F401 — register models
@@ -32,37 +33,70 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Create database tables on startup and initialize global agents."""
-    logger.info("Creating database tables…")
+    """Create database tables, connect MCP, and initialize global agents."""
+    import time
+
+    t0 = time.time()
+    logger.info("=== Credit Dossier API Starting ===")
+
+    # Step 1: Database
+    t_step = time.time()
+    logger.info("[startup] Creating database tables…")
     Base.metadata.create_all(bind=engine)
-    logger.info("Database tables ready.")
+    logger.info(f"[startup] Database ready ({(time.time() - t_step)*1000:.0f}ms)")
 
     from app.database import SessionLocal
     from app.services.mistral_library_service import MistralLibraryService
-
     from app.services.mcp_service import MCPClientService
-    db = SessionLocal()
+    from app.config import settings
+
+    # Step 2: MCP connection (graceful — don't crash if unreachable)
+    t_step = time.time()
+    logger.info("[startup] Connecting to MCP server…")
     try:
         await MCPClientService.connect()
+        logger.info(f"[startup] MCP connected ({(time.time() - t_step)*1000:.0f}ms)")
+    except Exception as e:
+        logger.warning(
+            f"[startup] MCP connection failed ({(time.time() - t_step)*1000:.0f}ms): {e}. "
+            f"Continuing without MCP — orchestration will use library RAG only."
+        )
+
+    # Step 3: Mistral Agents (16 section + 1 orchestration)
+    t_step = time.time()
+    db = SessionLocal()
+    try:
+        logger.info("[startup] Initializing Mistral agents…")
         await MistralLibraryService.initialize_global_agents(db)
+        logger.info(f"[startup] Agents ready ({(time.time() - t_step)*1000:.0f}ms)")
     finally:
         db.close()
 
+    total_ms = (time.time() - t0) * 1000
+    logger.info(
+        f"=== Startup complete in {total_ms:.0f}ms ==="
+        f" | MCP={'connected' if MCPClientService.is_connected else 'disconnected'}"
+        f" | Orchestration={'enabled' if settings.ORCHESTRATION_ENABLED else 'disabled'}"
+        f" | Gen semaphore={settings.GENERATION_SEMAPHORE}"
+        f" | Orch semaphore={settings.ORCHESTRATION_SEMAPHORE}"
+    )
+
     yield
-    logger.info("Shutting down. Cleaning up global agents...")
-    
+
+    logger.info("=== Shutting down ===")
     db = SessionLocal()
     try:
         await MistralLibraryService.cleanup_global_agents(db)
         await MCPClientService.disconnect()
     finally:
         db.close()
+    logger.info("=== Shutdown complete ===")
 
 
 app = FastAPI(
     title="Credit Dossier API",
     description="Backend API for the Credit Pitch Book Pipeline — deals, narratives, exports.",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -94,4 +128,23 @@ app.include_router(mcp_router)
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "service": "Credit Dossier API"}
+    from app.services.mcp_service import MCPClientService
+    from app.database import SessionLocal
+    from app.models.mistral_agent import MistralAgent
+
+    db = SessionLocal()
+    try:
+        agent_count = db.query(MistralAgent).count()
+    finally:
+        db.close()
+
+    return {
+        "status": "ok",
+        "service": "Credit Dossier API",
+        "version": "2.0.0",
+        "agents_initialized": agent_count,
+        "orchestration_enabled": settings.ORCHESTRATION_ENABLED,
+        "generation_semaphore": settings.GENERATION_SEMAPHORE,
+        "orchestration_semaphore": settings.ORCHESTRATION_SEMAPHORE,
+        "mcp": MCPClientService.get_health_status(),
+    }

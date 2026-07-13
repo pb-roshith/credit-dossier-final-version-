@@ -74,9 +74,19 @@ async def generate_narrative(
     db: Session = Depends(get_db),
 ):
     """Generate AI narrative for a single section using its dedicated Mistral agent."""
+    deal = DealService.get_deal(db, deal_id)
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+        
+    if deal.library_sync_status == "syncing":
+        raise HTTPException(
+            status_code=409, 
+            detail="Library sync in progress. Please wait until documents are fully uploaded."
+        )
+
     custom_instructions = body.custom_instructions if body else None
     try:
-        section = await NarrativeService.generate_section(
+        section, orchestration_strategy = await NarrativeService.generate_section(
             db, deal_id, section_id, custom_instructions
         )
     except ValueError as e:
@@ -101,6 +111,7 @@ async def generate_narrative(
         state=section.state,
         accuracy_score=section.accuracy_score,
         accuracy_details=accuracy_details,
+        orchestration_strategy=orchestration_strategy,
     )
 
 
@@ -111,6 +122,16 @@ async def draft_all_sections(deal_id: str, db: Session = Depends(get_db)):
     Each section has its own dedicated Mistral agent.
     All agents run concurrently via asyncio.gather().
     """
+    deal = DealService.get_deal(db, deal_id)
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+        
+    if deal.library_sync_status == "syncing":
+        raise HTTPException(
+            status_code=409, 
+            detail="Library sync in progress. Please wait until documents are fully uploaded."
+        )
+
     results = await NarrativeService.draft_all(db, deal_id)
     if not results:
         raise HTTPException(status_code=404, detail="Deal not found")
@@ -126,6 +147,8 @@ async def draft_all_sections(deal_id: str, db: Session = Depends(get_db)):
                 state=r["state"],
                 accuracy_score=r.get("accuracy", {}).get("score") if r.get("accuracy") else None,
                 accuracy_details=r.get("accuracy"),
+                orchestration_strategy=r.get("orchestration_strategy"),
+                timing=r.get("timing"),
             )
             for r in results
         ],

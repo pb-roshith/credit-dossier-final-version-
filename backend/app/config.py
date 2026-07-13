@@ -29,6 +29,22 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"
     VECTOR_STORE_DIR: str = "./vector_store"
 
+    # ── Orchestration ──────────────────────────────────────────
+    ORCHESTRATION_ENABLED: bool = True
+
+    # ── Generation ─────────────────────────────────────────────
+    MAX_GROUNDING_CHARS: int = 120_000
+    GENERATION_SEMAPHORE: int = 3
+    ORCHESTRATION_SEMAPHORE: int = 5
+
+    # ── MCP ────────────────────────────────────────────────────
+    MCP_CACHE_TTL_SECONDS: int = 300
+    MCP_CIRCUIT_BREAKER_SECONDS: int = 60
+    MCP_MAX_FAILURES: int = 3
+
+    # ── Production ─────────────────────────────────────────────
+    ENABLE_TIMING_METRICS: bool = True
+
     @property
     def is_sqlite(self) -> bool:
         return self.DATABASE_URL.startswith("sqlite")

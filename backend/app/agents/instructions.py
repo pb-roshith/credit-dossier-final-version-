@@ -17,13 +17,17 @@ CRITICAL ANTI-HALLUCINATION RULES (MANDATORY):
 1. ONLY use information retrieved from the document library via your search tool.
 2. If the library search returns no relevant documents for a data point, explicitly state "[Data not available in provided documents]".
 3. NEVER fabricate or invent numbers, dates, percentages, financial figures, credit ratings, or growth rates.
-4. Do NOT cite the source document name or include citations in your response. Present the data directly.
-5. If insufficient data is available to write a complete sub-section, produce what you can from available documents and clearly mark gaps with "[Insufficient data]".
-6. Do NOT extrapolate trends beyond what the documents explicitly state.
-7. Distinguish clearly between facts from documents and your analytical commentary.
-8. Do NOT include a title/heading for the section — the system adds that automatically.
-9. Use markdown formatting for structure (bullets, tables, bold, etc.).
-10. NEVER output any preamble, introductory text, or summary of your search actions (e.g. do NOT output "Searching for...", "Here is the section...", etc). Output ONLY the final markdown content for the section.
+4. When citing data from a document, you MUST include an inline citation like [1], [2], etc.
+5. At the very bottom of your response, you MUST include a "## References" section listing each citation. 
+6. In the References section, you MUST wrap the exact document name in double square brackets like this: [[Document Name.pdf]]. Include the page number or section if available. Example: "[1] [[Halfords Annual Report.pdf]], page 12"
+7. If insufficient data is available to write a complete sub-section, produce what you can from available documents and clearly mark gaps with "[Insufficient data]".
+8. Do NOT extrapolate trends beyond what the documents explicitly state.
+9. Distinguish clearly between facts from documents and your analytical commentary.
+10. Do NOT include a main title/heading for the section — the system adds that automatically. You may use subheadings.
+11. Use markdown formatting for structure (bullets, tables, bold, etc.).
+12. NEVER output any preamble, introductory text, or summary of your search actions (e.g. do NOT output "Searching for...", "Here is the section...", etc). Output ONLY the final markdown content for the section.
+13. If an ORCHESTRATION STRATEGY is provided, use its recommended search queries and priority data points to focus your library search. Prioritize the documents and data points indicated.
+14. If the orchestration strategy identifies GAPS (missing data), proactively mark those areas with "[Data not available]" rather than inventing content.
 """
 
 # ── Section Instructions ────────────────────────────────────────────────
@@ -32,6 +36,11 @@ from typing import Dict
 
 SECTION_INSTRUCTIONS: Dict[str, Dict[str, str]] = {
     "executive_summary": {
+        "required_deal_fields": [
+            "customer", "customer_type", "industry", "segment", "geography",
+            "sector", "kyc", "facility", "currency", "amount", "tenure",
+            "pricing", "repayment", "collateral", "due", "status",
+        ],
         "system_prompt": """You are a senior credit analyst at a leading commercial bank.
 You are drafting the **Executive Summary** section of a credit pitch book.
 
@@ -57,6 +66,10 @@ STRUCTURE:
     },
 
     "client_overview": {
+        "required_deal_fields": [
+            "customer", "customer_type", "industry", "segment", "geography",
+            "city", "sector", "kyc",
+        ],
         "system_prompt": """You are drafting the **Client Overview** section of a credit pitch book.
 
 DOCUMENT SEARCH STRATEGY:
@@ -80,6 +93,10 @@ STRUCTURE:
     },
 
     "relationship_summary": {
+        "required_deal_fields": [
+            "customer", "customer_type", "facility", "currency", "amount",
+            "tenure", "pricing",
+        ],
         "system_prompt": """You are drafting the **Relationship Summary** section.
 
 DOCUMENT SEARCH STRATEGY:
@@ -104,6 +121,9 @@ STRUCTURE:
     },
 
     "industry_analysis": {
+        "required_deal_fields": [
+            "customer", "industry", "segment", "sector", "geography",
+        ],
         "system_prompt": """You are drafting the **Industry Analysis** section.
 
 DOCUMENT SEARCH STRATEGY:
@@ -129,6 +149,9 @@ STRUCTURE:
     },
 
     "financial_analysis": {
+        "required_deal_fields": [
+            "customer", "industry", "currency", "amount", "sector",
+        ],
         "system_prompt": """You are drafting the **Financial Analysis** section.
 
 DOCUMENT SEARCH STRATEGY:
@@ -157,6 +180,9 @@ STRUCTURE:
     },
 
     "ratio_analysis": {
+        "required_deal_fields": [
+            "customer", "industry", "currency", "sector",
+        ],
         "system_prompt": """You are drafting the **Ratio Analysis** section.
 
 DOCUMENT SEARCH STRATEGY:
@@ -182,6 +208,9 @@ STRUCTURE:
     },
 
     "cash_flow_analysis": {
+        "required_deal_fields": [
+            "customer", "industry", "currency", "amount", "tenure", "facility",
+        ],
         "system_prompt": """You are drafting the **Cash Flow Analysis** section.
 
 DOCUMENT SEARCH STRATEGY:
@@ -206,6 +235,10 @@ STRUCTURE:
     },
 
     "qualitative_assessment": {
+        "required_deal_fields": [
+            "customer", "customer_type", "industry", "segment", "geography",
+            "sector",
+        ],
         "system_prompt": """You are drafting the **Qualitative Assessment** section.
 
 DOCUMENT SEARCH STRATEGY:
@@ -232,6 +265,10 @@ STRUCTURE:
     },
 
     "credit_risk_assessment": {
+        "required_deal_fields": [
+            "customer", "industry", "segment", "sector", "facility",
+            "currency", "amount", "tenure", "collateral",
+        ],
         "system_prompt": """You are drafting the **Credit Risk Assessment** section.
 
 DOCUMENT SEARCH STRATEGY:
@@ -257,6 +294,10 @@ STRUCTURE:
     },
 
     "facility_structure": {
+        "required_deal_fields": [
+            "customer", "facility", "currency", "amount", "tenure",
+            "pricing", "repayment", "collateral", "due",
+        ],
         "system_prompt": """You are drafting the **Facility Structure** section.
 
 DOCUMENT SEARCH STRATEGY:
@@ -282,6 +323,10 @@ STRUCTURE:
     },
 
     "policy_mapping": {
+        "required_deal_fields": [
+            "customer", "segment", "facility", "currency", "amount",
+            "tenure", "collateral",
+        ],
         "system_prompt": """You are drafting the **Policy Mapping** section.
 
 DOCUMENT SEARCH STRATEGY:
@@ -306,6 +351,9 @@ STRUCTURE:
     },
 
     "collateral_and_security": {
+        "required_deal_fields": [
+            "customer", "collateral", "facility", "amount", "currency",
+        ],
         "system_prompt": """You are drafting the **Collateral and Security** section.
 
 DOCUMENT SEARCH STRATEGY:
@@ -333,6 +381,9 @@ STRUCTURE:
     },
 
     "covenants_and_conditions": {
+        "required_deal_fields": [
+            "customer", "facility", "amount", "currency", "tenure",
+        ],
         "system_prompt": """You are drafting the **Covenants and Conditions** section.
 
 DOCUMENT SEARCH STRATEGY:
@@ -359,6 +410,9 @@ STRUCTURE:
     },
 
     "esg_analysis": {
+        "required_deal_fields": [
+            "customer", "industry", "sector", "geography",
+        ],
         "system_prompt": """You are drafting the **ESG Analysis** section.
 
 DOCUMENT SEARCH STRATEGY:
@@ -385,6 +439,10 @@ STRUCTURE:
     },
 
     "key_risks_and_mitigants": {
+        "required_deal_fields": [
+            "customer", "industry", "segment", "sector", "facility",
+            "currency", "amount",
+        ],
         "system_prompt": """You are drafting the **Key Risks and Mitigants** section.
 
 DOCUMENT SEARCH STRATEGY:
@@ -411,6 +469,9 @@ STRUCTURE:
     },
 
     "appendix": {
+        "required_deal_fields": [
+            "customer",
+        ],
         "system_prompt": """You are drafting the **Appendix** section.
 
 DOCUMENT SEARCH STRATEGY:

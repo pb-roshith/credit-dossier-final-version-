@@ -46,6 +46,18 @@ export type LibraryFile = {
   created_at: string;
 };
 
+export type LibrarySyncLog = {
+  id: string;
+  doc_title: string;
+  doc_url: string | null;
+  status: "queued" | "downloading" | "uploading" | "completed" | "failed";
+  error: string | null;
+  file_size: number | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
 export type Section = {
   id: string;
   section_key: string;
@@ -68,6 +80,13 @@ export type Section = {
   } | null;
   output_template: string | null;
   template_file_path: string | null;
+  orchestration_strategy?: string | null;
+  timing?: {
+    orchestration_ms: number;
+    generation_ms: number;
+    accuracy_ms: number;
+    total_ms: number;
+  } | null;
   moderation_status: "safe" | "flagged" | null;
   moderation_details: {
     is_safe: boolean;
@@ -113,20 +132,23 @@ export type Deal = {
   due: string;
   owner: string;
   status: Status;
+  library_sync_status: "not_started" | "syncing" | "ready" | "partial" | "error";
+  mistral_library_id: string | null;
   created_at: string;
   updated_at: string;
-  primary_color?: string;
-  secondary_color?: string;
-  theme_palette?: string[];
-  mistral_library_id?: string | null;
+  primary_color: string;
+  secondary_color: string;
+  theme_palette: string[];
+  
   sections: Section[];
-  documents: DealDocument[]; // Legacy
-  library_files: LibraryFile[]; // Mistral Library
+  documents: DealDocument[];
+  library_files: LibraryFile[];
+  sync_logs: LibrarySyncLog[];
   audit_entries: AuditEntry[];
   versions: Version[];
 };
 
-export type DealListItem = Omit<Deal, "sections" | "audit_entries" | "versions" | "documents" | "library_files"> & {
+export type DealListItem = Omit<Deal, "sections" | "audit_entries" | "versions" | "documents" | "library_files" | "sync_logs"> & {
   sections_ready: number;
   sections_total: number;
   versions_count: number;
@@ -265,15 +287,25 @@ export const api = {
     list: (dealId: string) =>
       request<LibraryFile[]>(`${API_BASE}/deals/${dealId}/library`),
     upload: async (dealId: string, formData: FormData) => {
-      const res = await fetch(`${API_BASE}/deals/${dealId}/library`, {
-        method: "POST",
-        body: formData,
-      });
-      if (!res.ok) throw new Error(`Library upload failed: ${res.status}`);
-      return res.json() as Promise<LibraryFile>;
+      const res = await fetch(`${API_BASE}/deals/${dealId}/library`, { method: "POST", body: formData });
+      if (!res.ok) throw new Error("Failed to upload library file");
+      return res.json();
     },
-    delete: (dealId: string, fileId: string) =>
-      request<void>(`${API_BASE}/deals/${dealId}/library/${fileId}`, { method: "DELETE" }),
+    delete: async (dealId: string, fileId: string) => {
+      const res = await fetch(`${API_BASE}/deals/${dealId}/library/${fileId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete library file");
+      return res.json();
+    },
+    syncStatus: async (dealId: string) => {
+      const res = await fetch(`${API_BASE}/deals/${dealId}/library/sync-status`);
+      if (!res.ok) throw new Error("Failed to fetch sync status");
+      return res.json();
+    },
+    triggerSync: async (dealId: string) => {
+      const res = await fetch(`${API_BASE}/deals/${dealId}/library/sync`, { method: "POST" });
+      if (!res.ok) throw new Error("Failed to trigger sync");
+      return res.json();
+    },
     initialize: (dealId: string) =>
       request<{ library_id: string; agents_created: number; agent_keys: string[] }>(
         `${API_BASE}/deals/${dealId}/library/initialize`,
