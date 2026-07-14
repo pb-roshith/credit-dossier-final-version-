@@ -6,6 +6,7 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+import httpx
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.shared.exceptions import McpError
@@ -13,6 +14,9 @@ from mcp.shared.exceptions import McpError
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# SSE endpoint for the remote MCP server
+_MCP_SSE_URL = "https://companydocmcpserver-production.up.railway.app/sse"
 
 
 # ── Typed Responses ────────────────────────────────────────────────
@@ -30,6 +34,8 @@ class MCPClientService:
     _session: Optional[ClientSession] = None
     _exit_stack: Optional[AsyncExitStack] = None
     is_connected: bool = False
+    _keepalive_task: Optional[asyncio.Task] = None
+    _connect_lock: asyncio.Lock = asyncio.Lock()
 
     # ── TTL Cache for document summaries ────────────────────────
     _summary_cache: Dict[str, tuple[str, float]] = {}  # key → (data, timestamp)
@@ -67,34 +73,49 @@ class MCPClientService:
 
     @classmethod
     async def connect(cls) -> None:
+        """Connect to the remote MCP SSE server with lock to prevent races."""
         if cls.is_connected:
             return
-        logger.info("Connecting to MCP SSE server...")
-        try:
-            cls._exit_stack = AsyncExitStack()
-            sse_transport = await cls._exit_stack.enter_async_context(
-                sse_client("https://companydocmcpserver-production.up.railway.app/sse")
-            )
-            cls._session = await cls._exit_stack.enter_async_context(
-                ClientSession(sse_transport[0], sse_transport[1])
-            )
-            await cls._session.initialize()
-            cls.is_connected = True
-            cls._record_success()
-            logger.info("Connected to MCP server successfully.")
-        except Exception as e:
-            logger.error(f"Failed to connect to MCP server: {e}")
-            cls.is_connected = False
-            cls._record_failure()
-            if cls._exit_stack:
-                await cls._exit_stack.aclose()
-                cls._exit_stack = None
-            cls._session = None
+        async with cls._connect_lock:
+            # Double-check after acquiring lock
+            if cls.is_connected:
+                return
+            logger.info("Connecting to MCP SSE server...")
+            try:
+                cls._exit_stack = AsyncExitStack()
+                sse_transport = await cls._exit_stack.enter_async_context(
+                    sse_client(_MCP_SSE_URL)
+                )
+                cls._session = await cls._exit_stack.enter_async_context(
+                    ClientSession(sse_transport[0], sse_transport[1])
+                )
+                await cls._session.initialize()
+                cls.is_connected = True
+                cls._record_success()
+                logger.info("Connected to MCP server successfully.")
+
+                # Start background keepalive to prevent Railway idle timeout
+                cls._start_keepalive()
+            except Exception as e:
+                logger.error(f"Failed to connect to MCP server: {e}")
+                cls.is_connected = False
+                cls._record_failure()
+                if cls._exit_stack:
+                    try:
+                        await cls._exit_stack.aclose()
+                    except Exception:
+                        pass
+                    cls._exit_stack = None
+                cls._session = None
 
     @classmethod
     async def disconnect(cls) -> None:
+        cls._stop_keepalive()
         if cls._exit_stack:
-            await cls._exit_stack.aclose()
+            try:
+                await cls._exit_stack.aclose()
+            except Exception:
+                pass
         cls._exit_stack = None
         cls._session = None
         cls.is_connected = False
@@ -104,66 +125,147 @@ class MCPClientService:
     @classmethod
     def _mark_disconnected(cls) -> None:
         """Mark the connection as dead (SSE dropped). Next call will auto-reconnect."""
+        cls._stop_keepalive()
         cls.is_connected = False
         cls._session = None
         # Don't close _exit_stack here — the SSE reader already errored out
         cls._exit_stack = None
 
+    # ── Keepalive ──────────────────────────────────────────────
+
     @classmethod
-    async def _call_with_reconnect(cls, tool_name: str, arguments: dict) -> Any:
+    def _start_keepalive(cls) -> None:
+        """Start a background task that pings the MCP server every 3 minutes.
+
+        Railway kills idle SSE connections after ~5 min. This lightweight
+        `list_companies` call keeps the connection warm without any side effects.
+        """
+        cls._stop_keepalive()  # cancel any prior task
+        cls._keepalive_task = asyncio.create_task(cls._keepalive_loop())
+        logger.info("MCP keepalive task started (interval=%ds)", settings.MCP_KEEPALIVE_INTERVAL)
+
+    @classmethod
+    def _stop_keepalive(cls) -> None:
+        if cls._keepalive_task and not cls._keepalive_task.done():
+            cls._keepalive_task.cancel()
+            cls._keepalive_task = None
+
+    @classmethod
+    async def _keepalive_loop(cls) -> None:
+        """Periodically send a lightweight MCP call to prevent SSE idle timeout."""
+        interval = settings.MCP_KEEPALIVE_INTERVAL
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                if not cls.is_connected or not cls._session:
+                    logger.debug("MCP keepalive: not connected, skipping")
+                    continue
+                try:
+                    # Use list_companies as a lightweight ping — it's a read-only call
+                    await cls._session.call_tool("list_companies", arguments={})
+                    logger.debug("MCP keepalive ping OK")
+                except (httpx.RemoteProtocolError, httpx.ReadError,
+                        ConnectionError, OSError, BrokenPipeError) as e:
+                    logger.warning(
+                        f"MCP keepalive detected dead connection: {type(e).__name__}: {e}. "
+                        f"Will reconnect on next tool call."
+                    )
+                    cls._mark_disconnected()
+                    cls._record_failure()
+                    return  # exit loop; reconnect will restart keepalive
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.debug(f"MCP keepalive non-fatal error: {e}")
+        except asyncio.CancelledError:
+            logger.debug("MCP keepalive task cancelled")
+
+    # ── Ensure Connected ───────────────────────────────────────
+
+    @classmethod
+    async def _ensure_connected(cls) -> bool:
+        """Ensure the MCP connection is alive. Returns True if connected."""
+        if cls.is_connected and cls._session:
+            return True
+        if cls._is_circuit_open():
+            return False
+        logger.info("MCP not connected — attempting auto-reconnect...")
+        await cls.connect()
+        return cls.is_connected and cls._session is not None
+
+    @classmethod
+    async def _call_with_reconnect(
+        cls,
+        tool_name: str,
+        arguments: dict,
+        max_retries: int = 2,
+    ) -> Any:
         """
         Call an MCP tool with automatic reconnection on SSE drops.
 
         If the SSE connection was dropped by Railway (RemoteProtocolError),
         this will:
-        1. Mark the connection as dead
-        2. Attempt one reconnection
-        3. Retry the tool call
+        1. Proactively ensure connection is alive
+        2. Attempt the tool call
+        3. On connection errors: mark disconnected, backoff, reconnect, retry
+        4. Retry up to `max_retries` times with exponential backoff
         """
-        import httpx
-
-        try:
-            result = await cls._session.call_tool(tool_name, arguments=arguments)
-            cls._record_success()
-            return result
-        except (httpx.RemoteProtocolError, httpx.ReadError,
-                ConnectionError, OSError, BrokenPipeError) as e:
-            logger.warning(
-                f"MCP SSE connection dropped during {tool_name}: "
-                f"{type(e).__name__}: {e}. Attempting reconnection..."
+        # Proactive connection check
+        if not await cls._ensure_connected():
+            raise ConnectionError(
+                f"MCP not connected and cannot reconnect (circuit breaker may be open)"
             )
-            cls._mark_disconnected()
-            cls._record_failure()
 
-            # Attempt reconnection
+        last_err: Optional[Exception] = None
+        for attempt in range(max_retries + 1):
             try:
-                await cls.connect()
-                if cls.is_connected and cls._session:
-                    logger.info(f"MCP reconnected. Retrying {tool_name}...")
-                    result = await cls._session.call_tool(tool_name, arguments=arguments)
-                    cls._record_success()
-                    return result
-                else:
-                    raise ConnectionError("Reconnection succeeded but session is None")
-            except Exception as reconnect_err:
-                logger.error(
-                    f"MCP reconnection failed for {tool_name}: {reconnect_err}"
+                result = await cls._session.call_tool(tool_name, arguments=arguments)
+                cls._record_success()
+                return result
+            except (httpx.RemoteProtocolError, httpx.ReadError,
+                    ConnectionError, OSError, BrokenPipeError) as e:
+                last_err = e
+                logger.warning(
+                    f"MCP SSE connection dropped during {tool_name} "
+                    f"(attempt {attempt + 1}/{max_retries + 1}): "
+                    f"{type(e).__name__}: {e}"
                 )
+                cls._mark_disconnected()
+                cls._record_failure()
+
+                if attempt < max_retries:
+                    backoff = min(2 ** attempt, 8)  # 1s, 2s, capped at 8s
+                    logger.info(
+                        f"Backing off {backoff}s before reconnect attempt "
+                        f"{attempt + 2}..."
+                    )
+                    await asyncio.sleep(backoff)
+                    try:
+                        await cls.connect()
+                        if not cls.is_connected or not cls._session:
+                            raise ConnectionError("Reconnection succeeded but session is None")
+                        logger.info(f"MCP reconnected. Retrying {tool_name}...")
+                    except Exception as reconnect_err:
+                        logger.error(
+                            f"MCP reconnection attempt {attempt + 2} failed: {reconnect_err}"
+                        )
+                        last_err = reconnect_err
+            except Exception as e:
+                # Non-connection errors (e.g. McpError from bad tool call) — don't retry
+                logger.error(f"MCP tool call {tool_name} failed: {e}")
                 cls._record_failure()
                 raise
-        except Exception as e:
-            # Non-connection errors (e.g. McpError from bad tool call)
-            logger.error(f"MCP tool call {tool_name} failed: {e}")
-            cls._record_failure()
-            raise
+
+        # All retries exhausted
+        logger.error(
+            f"MCP tool call {tool_name} failed after {max_retries + 1} attempts"
+        )
+        raise last_err or ConnectionError(f"MCP call {tool_name} failed")
 
     # ── Core Tool Calls ────────────────────────────────────────
 
     @classmethod
     async def list_companies(cls) -> List[Dict[str, Any]]:
-        if not cls.is_connected or not cls._session:
-            logger.warning("MCP client not connected. Returning empty company list.")
-            return []
         if cls._is_circuit_open():
             logger.warning("MCP circuit breaker is OPEN. Skipping list_companies.")
             return []
@@ -182,8 +284,6 @@ class MCPClientService:
 
     @classmethod
     async def get_documents(cls, company_name: str) -> List[Dict[str, Any]]:
-        if not cls.is_connected or not cls._session:
-            return []
         if cls._is_circuit_open():
             return []
         try:
@@ -203,8 +303,6 @@ class MCPClientService:
 
     @classmethod
     async def get_company_details(cls, company_name: str) -> Dict[str, Any]:
-        if not cls.is_connected or not cls._session:
-            return {}
         if cls._is_circuit_open():
             return {}
         try:
@@ -221,8 +319,6 @@ class MCPClientService:
 
     @classmethod
     async def get_document_summaries(cls, company_name: str) -> str:
-        if not cls.is_connected or not cls._session:
-            return "MCP server disconnected. Summaries unavailable."
         if cls._is_circuit_open():
             return "MCP circuit breaker open. Summaries temporarily unavailable."
         try:

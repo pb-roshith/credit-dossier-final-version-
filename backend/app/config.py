@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     MCP_CACHE_TTL_SECONDS: int = 300
     MCP_CIRCUIT_BREAKER_SECONDS: int = 60
     MCP_MAX_FAILURES: int = 3
+    MCP_KEEPALIVE_INTERVAL: int = 180  # seconds between keepalive pings (< Railway's 5 min timeout)
 
     # ── Production ─────────────────────────────────────────────
     ENABLE_TIMING_METRICS: bool = True
