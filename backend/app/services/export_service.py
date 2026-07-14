@@ -38,10 +38,10 @@ def _parse_table_data(table_str: str) -> pd.DataFrame | None:
     if len(lines) < 3: 
         return None
     
-    headers = [col.strip() for col in lines[0].split('|')[1:-1]]
+    headers = [col.replace('**', '').replace('*', '').strip() for col in lines[0].split('|')[1:-1]]
     rows = []
     for line in lines[2:]:
-        cols = [col.strip() for col in line.split('|')[1:-1]]
+        cols = [col.replace('**', '').replace('*', '').strip() for col in line.split('|')[1:-1]]
         if len(cols) == len(headers):
             rows.append(cols)
     if not rows: 
@@ -76,28 +76,44 @@ def _markdown_to_html_with_graphs(text: str, theme_palette: list[str]) -> str:
         df = _parse_table_data(table_str)
         if df is not None:
             try:
-                fig, ax = plt.subplots(figsize=(8, 4))
+                fig, ax = plt.subplots(figsize=(10, 6))
                 # Use the dynamic colors from the full palette
                 colors = theme_palette if len(theme_palette) >= 5 else (theme_palette + ["#64748b", "#94a3b8", "#cbd5e1", "#334155", "#0f172a"])
-                bars = df.plot(x=df.columns[0], kind='bar', ax=ax, rot=45, color=colors[:len(df.columns)-1])
+                bars = df.plot(x=df.columns[0], kind='bar', ax=ax, color=colors[:len(df.columns)-1], width=0.7)
                 
+                def format_label(val):
+                    if pd.isna(val) or val == 0:
+                        return ""
+                    abs_val = abs(val)
+                    if abs_val >= 1_000_000:
+                        return f"{val/1_000_000:.1f}M"
+                    elif abs_val >= 1_000:
+                        return f"{val/1_000:.1f}K"
+                    elif abs_val >= 1:
+                        return f"{val:.1f}"
+                    else:
+                        return f"{val:.2f}"
+
                 # Add value labels
                 for container in ax.containers:
-                    ax.bar_label(container, fmt='%.1f', padding=3, color='#334155', fontsize=8, fontweight='bold')
+                    labels = [format_label(v.get_height()) for v in container]
+                    ax.bar_label(container, labels=labels, padding=3, color='#334155', fontsize=9, fontweight='bold', rotation=90)
                 
                 ax.spines['top'].set_visible(False)
                 ax.spines['right'].set_visible(False)
                 ax.spines['left'].set_visible(False)
                 ax.set_xlabel("")
                 ax.set_yticks([]) # Hide y-ticks to rely on bar labels
+                plt.xticks(rotation=45, ha='right', fontsize=10)
+                ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=min(3, len(df.columns)-1), frameon=False)
                 plt.tight_layout()
                 
                 buf = io.BytesIO()
-                fig.savefig(buf, format='png', dpi=300, transparent=True)
+                fig.savefig(buf, format='png', dpi=300, transparent=True, bbox_inches='tight')
                 plt.close(fig)
                 
                 img_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-                img_tag = f"<div style='text-align:center; margin: 20px 0;'><img src='data:image/png;base64,{img_b64}' width='500' /></div>\n\n"
+                img_tag = f"<div style='text-align:center; margin: 20px 0;'><img src='data:image/png;base64,{img_b64}' style='max-width: 100%; height: auto;' /></div>\n\n"
                 return formatted_table + img_tag
             except Exception as e:
                 logger.error(f"Failed to plot table: {e}")
@@ -106,6 +122,31 @@ def _markdown_to_html_with_graphs(text: str, theme_palette: list[str]) -> str:
 
     transformed = table_pattern.sub(replacer, text)
     html = markdown.markdown(transformed, extensions=['tables'])
+    
+    # Post-process HTML to force equal column widths in PDF
+    def fix_table_widths(match):
+        table_html = match.group(0)
+        # Find number of columns from the first row
+        tr_match = re.search(r'<tr\b[^>]*>(.*?)</tr>', table_html, re.DOTALL | re.IGNORECASE)
+        if not tr_match:
+            return table_html
+            
+        cells = re.findall(r'<(?:th|td)\b', tr_match.group(1), re.IGNORECASE)
+        if not cells:
+            return table_html
+            
+        col_count = len(cells)
+        if col_count == 0:
+            return table_html
+            
+        width_pct = int(100 / col_count)
+        
+        # Inject HTML width attribute into ALL th and td tags to force xhtml2pdf to obey boundaries
+        table_html = re.sub(r'<(th|td)\b([^>]*)>', f'<\\1 width="{width_pct}%" \\2>', table_html, flags=re.IGNORECASE)
+        return table_html
+
+    html = re.sub(r'<table\b.*?>.*?</table>', fix_table_widths, html, flags=re.DOTALL | re.IGNORECASE)
+    
     return html
 
 
@@ -199,15 +240,15 @@ class ExportService:
                 html_parts.append(page_break)
 
         css = f"""
-        @page {{ size: a4 portrait; margin: 2.5cm; }}
-        body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 11pt; line-height: 1.6; color: #334155; }}
+        @page {{ size: a4 portrait; margin: 2.0cm; }}
+        body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 11pt; line-height: 1.5; color: #334155; }}
         h1, h2, h3, h4 {{ color: {p_color}; margin-top: 25px; margin-bottom: 12px; font-weight: 600; }}
         p {{ margin-bottom: 15px; text-align: justify; }}
-        table {{ width: 100%; border-collapse: collapse; margin-top: 20px; margin-bottom: 30px; border: 1px solid #cbd5e1; }}
-        th {{ background-color: {p_color}; color: white; padding: 10px; text-align: left; font-weight: bold; border: 1px solid {p_color}; }}
-        td {{ border: 1px solid #cbd5e1; padding: 10px; }}
+        table {{ width: 100%; table-layout: fixed; border-collapse: collapse; margin-top: 15px; margin-bottom: 25px; border: 1px solid #cbd5e1; -pdf-keep-with-next: false; }}
+        th {{ background-color: {p_color}; color: white; padding: 8px 10px; text-align: left; font-weight: bold; border: 1px solid {p_color}; word-wrap: break-word; }}
+        td {{ border: 1px solid #cbd5e1; padding: 8px 10px; vertical-align: top; word-wrap: break-word; }}
         tr:nth-child(even) {{ background-color: #f8fafc; }}
-        ul, ol {{ margin-top: 12px; margin-bottom: 15px; padding-left: 25px; }}
+        ul, ol {{ margin-top: 10px; margin-bottom: 15px; padding-left: 20px; }}
         li {{ margin-bottom: 6px; }}
         img {{ max-width: 100%; }}
         blockquote {{ border-left: 4px solid #cbd5e1; margin-left: 0; padding-left: 15px; color: #64748b; font-style: italic; }}
@@ -346,19 +387,38 @@ class ExportService:
                     if df is not None:
                         try:
                             import matplotlib.pyplot as plt
-                            fig, ax = plt.subplots(figsize=(8, 4))
+                            fig, ax = plt.subplots(figsize=(10, 6))
                             colors = theme_palette if len(theme_palette) >= 5 else (theme_palette + ["#64748b", "#94a3b8", "#cbd5e1", "#334155", "#0f172a"])
-                            bars = df.plot(x=df.columns[0], kind='bar', ax=ax, rot=45, color=colors[:len(df.columns)-1])
+                            bars = df.plot(x=df.columns[0], kind='bar', ax=ax, color=colors[:len(df.columns)-1], width=0.7)
+                            
+                            def format_label(val):
+                                if pd.isna(val) or val == 0:
+                                    return ""
+                                abs_val = abs(val)
+                                if abs_val >= 1_000_000:
+                                    return f"{val/1_000_000:.1f}M"
+                                elif abs_val >= 1_000:
+                                    return f"{val/1_000:.1f}K"
+                                elif abs_val >= 1:
+                                    return f"{val:.1f}"
+                                else:
+                                    return f"{val:.2f}"
+                                    
                             for container in ax.containers:
-                                ax.bar_label(container, fmt='%.1f', padding=3, color='#334155', fontsize=8, fontweight='bold')
+                                labels = [format_label(v.get_height()) for v in container]
+                                ax.bar_label(container, labels=labels, padding=3, color='#334155', fontsize=9, fontweight='bold', rotation=90)
+                                
                             ax.spines['top'].set_visible(False)
                             ax.spines['right'].set_visible(False)
                             ax.spines['left'].set_visible(False)
                             ax.set_xlabel("")
                             ax.set_yticks([])
+                            plt.xticks(rotation=45, ha='right', fontsize=10)
+                            ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.15), ncol=min(3, len(df.columns)-1), frameon=False)
                             plt.tight_layout()
+                            
                             buf = io.BytesIO()
-                            fig.savefig(buf, format='png', dpi=300, transparent=True)
+                            fig.savefig(buf, format='png', dpi=300, transparent=True, bbox_inches='tight')
                             plt.close(fig)
                             charts.append(buf.getvalue())
                         except Exception as e:
