@@ -6,7 +6,7 @@ import {
   File as FileIcon, Link as LinkIcon, Type, Eye, EyeOff, BarChart3, Table as TableIcon,
   ShieldCheck, ShieldAlert, AlertTriangle, ChevronDown, ChevronUp, Info, Library
 } from "lucide-react";
-import { api, formatAmount, type Deal, type Section } from "@/lib/deals";
+import { api, formatAmount, type Deal, type Section, type DealDocument } from "@/lib/deals";
 
 
 export const Route = createFileRoute("/deals/$dealId")({
@@ -906,8 +906,8 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               </div>
               {/* Accuracy Panel */}
               <AccuracyPanel section={active} />
-              {/* Orchestration Panel */}
-              <OrchestrationPanel section={active} />
+              {/* References Panel */}
+              <ReferencesPanel section={active} deal={deal} />
               {/* Rendered markdown content */}
               <div className="narrative-prose px-6 py-5">
                 {editingContent ? (
@@ -1177,14 +1177,10 @@ function AccuracyPanel({ section }: { section: Section }) {
   );
 }
 
-/* ── Orchestration Panel Component ───────────────────────────── */
+/* ── References Panel Component ───────────────────────────── */
 
-function OrchestrationPanel({ section }: { section: Section }) {
+function ReferencesPanel({ section, deal }: { section: Section, deal: Deal }) {
   const [expanded, setExpanded] = useState(false);
-
-  if (!section.orchestration_strategy) {
-    return null;
-  }
 
   const timing = section.timing;
   const timingStr = timing ? `(Orch: ${timing.orchestration_ms}ms, Gen: ${timing.generation_ms}ms)` : "";
@@ -1198,7 +1194,7 @@ function OrchestrationPanel({ section }: { section: Section }) {
         <div className="flex items-center gap-2">
           <RefreshCw className="h-3.5 w-3.5 text-blue-500" />
           <span className="text-xs font-semibold text-blue-700">
-            Orchestration Strategy {timingStr}
+            References {timingStr}
           </span>
         </div>
         <div className="text-blue-500">
@@ -1208,10 +1204,17 @@ function OrchestrationPanel({ section }: { section: Section }) {
 
       {expanded && (
         <div className="px-5 pb-4 pt-1 animate-in slide-in-from-top-1 duration-200">
-          <div className="rounded-md bg-white/80 border border-blue-200 p-3">
-            <pre className="text-[10px] text-blue-900 whitespace-pre-wrap font-mono overflow-y-auto max-h-[300px]">
-              {section.orchestration_strategy}
-            </pre>
+          <div className="rounded-md bg-white border border-blue-200 p-4 shadow-sm prose prose-sm prose-blue max-w-none text-sm text-blue-900 overflow-y-auto max-h-[400px]">
+            {section.orchestration_strategy ? (
+              <MarkdownRenderer 
+                content={section.orchestration_strategy} 
+                primaryColor={deal.primary_color} 
+                secondaryColor={deal.secondary_color} 
+                documents={deal.documents} 
+              />
+            ) : (
+              <p className="text-muted-foreground italic m-0">No orchestration references available yet. Generate a draft to view the agent's research strategy and sources.</p>
+            )}
           </div>
         </div>
       )}
@@ -1299,7 +1302,7 @@ function CustomTable({ children, primaryColor, secondaryColor, node, ...props }:
 
   if (!isNumeric) {
     return (
-      <div className="my-6 overflow-x-auto rounded-md border">
+      <div className="my-6 overflow-x-auto rounded-lg border border-slate-200 shadow-sm bg-white">
         <table className="w-full text-left text-sm" {...props}>{children}</table>
       </div>
     );
@@ -1397,7 +1400,24 @@ function MarkdownRenderer({ content, primaryColor, secondaryColor, documents }: 
       remarkPlugins={remarkGfm ? [remarkGfm] : []}
       components={{
         table: (props: any) => <CustomTable {...props} primaryColor={primaryColor} secondaryColor={secondaryColor} />,
-        a: (props: any) => <a {...props} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline hover:text-blue-800" />
+        a: (props: any) => <a {...props} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline hover:text-blue-800 font-medium transition-colors" />,
+        h1: (props: any) => <h1 {...props} className="text-2xl font-bold mt-6 mb-3 text-slate-900 tracking-tight" />,
+        h2: (props: any) => <h2 {...props} className="text-xl font-bold mt-5 mb-3 text-slate-800 tracking-tight" />,
+        h3: (props: any) => <h3 {...props} className="text-lg font-semibold mt-5 mb-2 text-slate-800" />,
+        h4: (props: any) => <h4 {...props} className="text-base font-semibold mt-4 mb-2 text-slate-800" />,
+        p: (props: any) => <p {...props} className="text-sm text-slate-600 mb-3 leading-relaxed" />,
+        ul: (props: any) => <ul {...props} className="list-disc pl-5 mb-4 space-y-1.5 text-sm text-slate-600 marker:text-slate-400" />,
+        ol: (props: any) => <ol {...props} className="list-decimal pl-5 mb-4 space-y-1.5 text-sm text-slate-600 marker:text-slate-400" />,
+        li: (props: any) => <li {...props} className="leading-relaxed" />,
+        strong: (props: any) => <strong {...props} className="font-semibold text-slate-800" />,
+        blockquote: (props: any) => <blockquote {...props} className="border-l-4 border-slate-200 pl-4 py-1 my-4 italic text-slate-600 bg-slate-50 rounded-r-md" />,
+        code: (props: any) => <code {...props} className="bg-slate-100 text-pink-600 px-1.5 py-0.5 rounded text-xs font-mono" />,
+        pre: (props: any) => <pre {...props} className="bg-slate-900 text-slate-50 p-4 rounded-lg overflow-x-auto mb-4 text-sm font-mono shadow-sm" />,
+        thead: (props: any) => <thead {...props} className="bg-slate-100/80 border-b border-slate-200" />,
+        tbody: (props: any) => <tbody {...props} className="divide-y divide-slate-100 bg-white" />,
+        tr: (props: any) => <tr {...props} className="hover:bg-slate-50/80 transition-colors" />,
+        th: (props: any) => <th {...props} className="px-4 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider" />,
+        td: (props: any) => <td {...props} className="px-4 py-3 text-sm text-slate-600 align-top" />
       }}
     >
       {processedContent}

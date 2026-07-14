@@ -46,28 +46,34 @@ class OrchestrationResult:
         parts = []
 
         if self.strategy_summary:
-            parts.append(f"Strategy: {self.strategy_summary}")
+            parts.append(f"### Strategy\n{self.strategy_summary}")
 
         if self.recommended_documents:
-            doc_lines = []
+            doc_lines = ["| Priority | Document | Relevance |", "|---|---|---|"]
             for doc in self.recommended_documents:
                 title = doc.get("title", "Unknown")
-                relevance = doc.get("relevance", "")
-                priority = doc.get("priority", "medium")
-                doc_lines.append(f"  - [{priority.upper()}] {title}: {relevance}")
-            parts.append("Recommended documents:\n" + "\n".join(doc_lines))
+                relevance = doc.get("relevance", "").replace('\n', ' ')
+                priority = doc.get("priority", "medium").upper()
+                doc_lines.append(f"| **{priority}** | {title} | {relevance} |")
+            parts.append("### Recommended Documents\n" + "\n".join(doc_lines))
 
         if self.priority_data_points:
-            parts.append("Priority data points to extract:\n  - " +
-                         "\n  - ".join(self.priority_data_points))
+            pt_lines = ["| Data Point |", "|---|"]
+            for pt in self.priority_data_points:
+                pt_lines.append(f"| {pt} |")
+            parts.append("### Priority Data Points to Extract\n" + "\n".join(pt_lines))
 
         if self.search_queries:
-            parts.append("Suggested search queries:\n  - " +
-                         "\n  - ".join(self.search_queries))
+            q_lines = ["| Query |", "|---|"]
+            for q in self.search_queries:
+                q_lines.append(f"| {q} |")
+            parts.append("### Suggested Search Queries\n" + "\n".join(q_lines))
 
         if self.gaps:
-            parts.append("Known data gaps (mark with [Data not available]):\n  - " +
-                         "\n  - ".join(self.gaps))
+            gap_lines = ["| Gap |", "|---|"]
+            for gap in self.gaps:
+                gap_lines.append(f"| {gap} |")
+            parts.append("### Known Data Gaps (Mark with [Data not available])\n" + "\n".join(gap_lines))
 
         return "\n\n".join(parts) if parts else ""
 
@@ -317,11 +323,13 @@ class OrchestrationService:
             result = OrchestrationService._parse_orchestration_response(content)
             result.elapsed_ms = (time.time() - start) * 1000
 
+            doc_names = [doc.get("title", "Unknown") for doc in result.recommended_documents]
             logger.info(
                 f"Orchestration for {section.section_key}: "
-                f"{len(result.recommended_documents)} docs recommended, "
+                f"{len(result.recommended_documents)} docs recommended: {doc_names}, "
                 f"confidence={result.confidence:.2f}, "
-                f"elapsed={result.elapsed_ms:.0f}ms"
+                f"elapsed={result.elapsed_ms:.0f}ms\n"
+                f"Complete Agent Output:\n{content}"
             )
             return result
 

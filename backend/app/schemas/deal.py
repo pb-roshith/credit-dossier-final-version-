@@ -91,6 +91,7 @@ class SectionResponse(BaseModel):
     accuracy_details: Optional[dict] = None
     output_template: Optional[str] = None
     template_file_path: Optional[str] = None
+    orchestration_strategy: Optional[str] = None
     moderation_status: Optional[str] = None
     moderation_details: Optional[dict] = None
     uploads: list[UploadBrief] = []  # Legacy

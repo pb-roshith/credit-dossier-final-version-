@@ -128,6 +128,7 @@ class NarrativeService:
         # Update section
         section.generated_content = content
         section.state = "ready"
+        section.orchestration_strategy = orchestration.to_strategy_text()
 
         # ── Step 5: Accuracy Evaluation ──────────────────────────
         acc_start = time.time()
@@ -361,6 +362,8 @@ class NarrativeService:
                 else:
                     section.accuracy_score = None
                     section.accuracy_details = None
+                
+                section.orchestration_strategy = result.get("orchestration_strategy")
 
         # Update deal status
         mandatory = [s for s in deal.sections if not s.optional]
