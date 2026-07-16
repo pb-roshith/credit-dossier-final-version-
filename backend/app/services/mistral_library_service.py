@@ -242,6 +242,7 @@ class MistralLibraryService:
                 name=f"GlobalAgent_{section_title}",
                 instructions=instructions,
                 completion_args={"temperature": 0.1},
+                tools=[{"type": "web_search"}],
             )
             
             ma = MistralAgent(section_key=section_key, agent_id=agent.id)
@@ -264,6 +265,7 @@ class MistralLibraryService:
                     name="GlobalAgent_Orchestration",
                     instructions=ORCHESTRATION_SYSTEM_PROMPT,
                     completion_args={"temperature": 0.1},
+                    tools=[{"type": "web_search"}],
                 )
                 ma_orch = MistralAgent(
                     section_key="orchestration", agent_id=orch_agent.id

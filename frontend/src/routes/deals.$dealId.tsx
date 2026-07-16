@@ -253,6 +253,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
 
   // Moderation state
   const [moderationError, setModerationError] = useState<string | null>(null);
+  const [showMoreModeration, setShowMoreModeration] = useState(false);
 
   useEffect(() => {
     if (active) {
@@ -262,6 +263,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       setShowTemplatePreview(false);
       setEditingContent(false);
       setModerationError(null);
+      setShowMoreModeration(false);
     }
   }, [activeId, active]);
 
@@ -798,64 +800,71 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
 
               {/* Per-field breakdown */}
               {active.moderation_details?.details && (() => {
-                const details = active.moderation_details.details as Record<string, { is_safe?: boolean; flagged_categories?: string[] }>;
+                const details = active.moderation_details.details as Record<string, { is_safe?: boolean; flagged_categories?: string[]; details?: Record<string, {flagged: boolean; score: number}> }>;
                 const instructionsFlagged = details.custom_instructions && !details.custom_instructions.is_safe;
                 const templateFlagged = details.output_template && !details.output_template.is_safe;
-                const instructionsCategories: string[] = details.custom_instructions?.flagged_categories || [];
-                const templateCategories: string[] = details.output_template?.flagged_categories || [];
+                
+                const renderCategoryBreakdown = (label: string, fieldDetails: { is_safe?: boolean; flagged_categories?: string[]; details?: Record<string, {flagged: boolean; score: number}> } | undefined) => {
+                  if (!fieldDetails || (!showMoreModeration && fieldDetails.is_safe)) return null;
+
+                  const allCats = fieldDetails.details || {};
+                  const displayedCats = showMoreModeration ? Object.keys(allCats) : (fieldDetails.flagged_categories || []);
+
+                  if (displayedCats.length === 0) return null;
+
+                  return (
+                    <div className="rounded-md border border-red-200 bg-white/60 p-3 space-y-2 mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[10px] font-bold uppercase ${label === 'Custom Instructions' ? 'bg-amber-100 text-amber-800 border-amber-200' : 'bg-violet-100 text-violet-800 border-violet-200'}`}>
+                          {label}
+                        </span>
+                        {!fieldDetails.is_safe && <span className="text-[10px] text-red-600 font-medium">— Flagged</span>}
+                      </div>
+                      <div className="space-y-1.5">
+                        {displayedCats.map(cat => {
+                          const info = MODERATION_CATEGORY_INFO[cat] || { label: cat.replace(/_/g, " "), fix: "Review and edit this content." };
+                          const catData = allCats[cat];
+                          const scoreValue = catData ? catData.score : 0;
+                          const scorePercent = (scoreValue * 100).toFixed(2);
+                          const isFlagged = catData ? catData.flagged : fieldDetails.flagged_categories?.includes(cat);
+                          
+                          const scoreColor = isFlagged ? 'bg-red-500' : (scoreValue > 0.5 ? 'bg-amber-500' : 'bg-emerald-400');
+
+                          return (
+                            <div key={cat} className="flex flex-col gap-2 text-xs border-b border-gray-100 last:border-0 pb-2.5 last:pb-0 pt-1">
+                               <div className="flex items-center gap-2">
+                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold shrink-0 ${isFlagged ? 'bg-red-200/60 text-red-800' : 'bg-slate-100 text-slate-600'}`}>
+                                  {info.label}
+                                </span>
+                                {isFlagged ? (
+                                    <span className="text-red-700">{info.fix}</span>
+                                ) : (
+                                    <span className="text-slate-500">Passed</span>
+                                )}
+                               </div>
+                               {catData && (
+                                 <div className="flex items-center gap-3 w-full max-w-[200px] pl-1 opacity-90 hover:opacity-100 transition-opacity">
+                                   <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden shrink-0">
+                                     <div className={`h-full ${scoreColor} rounded-full transition-all duration-500`} style={{ width: `${Math.max(scoreValue * 100, 2)}%` }} />
+                                   </div>
+                                   <span className="text-[10px] font-mono font-medium text-slate-500 shrink-0 w-10 text-right">{scorePercent}%</span>
+                                 </div>
+                               )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                };
 
                 return (
-                  <>
-                    {instructionsFlagged && (
-                      <div className="rounded-md border border-red-200 bg-white/60 p-3 space-y-2">
-                        <div className="flex items-center gap-2">
-                          <span className="inline-flex items-center gap-1 rounded bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 text-[10px] font-bold uppercase">
-                            Custom Instructions
-                          </span>
-                          <span className="text-[10px] text-red-600 font-medium">— Flagged</span>
-                        </div>
-                        <div className="space-y-1.5">
-                          {instructionsCategories.map((cat: string) => {
-                            const info = MODERATION_CATEGORY_INFO[cat] || { label: cat.replace(/_/g, " "), fix: "Review and edit this content." };
-                            return (
-                              <div key={cat} className="flex items-start gap-2 text-xs">
-                                <span className="rounded-full bg-red-200/60 text-red-800 px-2 py-0.5 text-[10px] font-semibold shrink-0 mt-0.5">
-                                  {info.label}
-                                </span>
-                                <span className="text-red-700">{info.fix}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-
-                    {templateFlagged && (
-                      <div className="rounded-md border border-red-200 bg-white/60 p-3 space-y-2">
-                        <div className="flex items-center gap-2">
-                          <span className="inline-flex items-center gap-1 rounded bg-violet-100 text-violet-800 border border-violet-200 px-2 py-0.5 text-[10px] font-bold uppercase">
-                            Output Template
-                          </span>
-                          <span className="text-[10px] text-red-600 font-medium">— Flagged</span>
-                        </div>
-                        <div className="space-y-1.5">
-                          {templateCategories.map((cat: string) => {
-                            const info = MODERATION_CATEGORY_INFO[cat] || { label: cat.replace(/_/g, " "), fix: "Review and edit this content." };
-                            return (
-                              <div key={cat} className="flex items-start gap-2 text-xs">
-                                <span className="rounded-full bg-red-200/60 text-red-800 px-2 py-0.5 text-[10px] font-semibold shrink-0 mt-0.5">
-                                  {info.label}
-                                </span>
-                                <span className="text-red-700">{info.fix}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
+                  <div>
+                    {renderCategoryBreakdown("Custom Instructions", details.custom_instructions)}
+                    {renderCategoryBreakdown("Output Template", details.output_template)}
 
                     {/* Fallback */}
-                    {!instructionsFlagged && !templateFlagged && flaggedCategories.length > 0 && (
+                    {!instructionsFlagged && !templateFlagged && flaggedCategories.length > 0 && !showMoreModeration && (
                       <div className="rounded-md border border-red-200 bg-white/60 p-3 space-y-1.5">
                         {flaggedCategories.map((cat: string) => {
                           const info = MODERATION_CATEGORY_INFO[cat] || { label: cat.replace(/_/g, " "), fix: "Review and edit this content." };
@@ -870,13 +879,22 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                         })}
                       </div>
                     )}
-                  </>
+                  </div>
                 );
               })()}
 
-              <p className="text-[10px] text-red-600 italic">
-                Fix the flagged content above, then save again. The moderation check will re-run automatically.
-              </p>
+              <div className="flex items-center justify-between mt-2 pt-2 border-t border-red-200/50">
+                <p className="text-[10px] text-red-600 italic">
+                  Fix the flagged content above, then save again. The moderation check will re-run automatically.
+                </p>
+                <button
+                  onClick={() => setShowMoreModeration(!showMoreModeration)}
+                  className="inline-flex items-center gap-1 text-[10px] font-medium text-red-700 hover:text-red-900 transition-colors bg-red-100 hover:bg-red-200 rounded-md px-2 py-1"
+                >
+                  {showMoreModeration ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                  {showMoreModeration ? "Show Less" : "Show More"}
+                </button>
+              </div>
             </div>
           )}
 
