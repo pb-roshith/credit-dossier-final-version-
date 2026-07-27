@@ -101,6 +101,7 @@ class Section(Base):
 
     # AI-generated content
     generated_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    original_generated_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     custom_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Accuracy assessment (set after generation)

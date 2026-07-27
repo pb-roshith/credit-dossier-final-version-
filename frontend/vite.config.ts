@@ -38,7 +38,7 @@ export default defineConfig({
     ignoreOutdatedRequests: true
   },
   server: {
-    host: "::",
+    host: "localhost",
     port: 8080,
     proxy: {
       "/api": {

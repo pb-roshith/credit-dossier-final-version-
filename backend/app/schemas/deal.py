@@ -86,6 +86,7 @@ class SectionResponse(BaseModel):
     state: str
     order_index: int
     generated_content: Optional[str] = None
+    original_generated_content: Optional[str] = None
     custom_instructions: Optional[str] = None
     accuracy_score: Optional[float] = None
     accuracy_details: Optional[dict] = None

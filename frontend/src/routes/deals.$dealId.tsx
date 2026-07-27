@@ -7,6 +7,7 @@ import {
   ShieldCheck, ShieldAlert, AlertTriangle, ChevronDown, ChevronUp, Info, Library
 } from "lucide-react";
 import { api, formatAmount, type Deal, type Section, type DealDocument } from "@/lib/deals";
+import { diffWords } from "diff";
 
 
 export const Route = createFileRoute("/deals/$dealId")({
@@ -250,6 +251,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const [savingContent, setSavingContent] = useState(false);
   const [selectedSectionIds, setSelectedSectionIds] = useState<Set<string>>(new Set());
   const [draftingSelected, setDraftingSelected] = useState(false);
+  const [showEdits, setShowEdits] = useState(false);
 
   // Moderation state
   const [moderationError, setModerationError] = useState<string | null>(null);
@@ -384,6 +386,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       await api.sections.update(deal.id, active.id, { generated_content: editedContent });
       refresh();
       setEditingContent(false);
+      setShowEdits(true);
     } catch (err) {
       console.error("Save content failed:", err);
     } finally {
@@ -747,6 +750,15 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               )}
             </span>
             <div className="flex items-center gap-2">
+              {active.generated_content && !editingContent && active.original_generated_content && active.original_generated_content !== active.generated_content && (
+                <button
+                  onClick={() => setShowEdits(!showEdits)}
+                  className={`inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs font-medium transition-colors ${showEdits ? "border-emerald-500/50 bg-emerald-50 text-emerald-700" : "border-primary-foreground/30 bg-primary-foreground/10 hover:bg-primary-foreground/20"}`}
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  {showEdits ? "Hide Edits" : "Show Edits"}
+                </button>
+              )}
               {active.generated_content && !editingContent && (
                 <button
                   onClick={() => {
@@ -947,6 +959,8 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                       </button>
                     </div>
                   </div>
+                ) : showEdits && active.original_generated_content ? (
+                  <DiffViewer original={active.original_generated_content} current={active.generated_content || ""} primaryColor={deal.primary_color} secondaryColor={deal.secondary_color} documents={deal.documents} />
                 ) : (
                   <MarkdownRenderer content={active.generated_content} primaryColor={deal.primary_color} secondaryColor={deal.secondary_color} documents={deal.documents} />
                 )}
@@ -1382,18 +1396,44 @@ function CustomTable({ children, primaryColor, secondaryColor, node, ...props }:
 }
 
 
+function DiffViewer({ original, current, primaryColor, secondaryColor, documents }: { original: string, current: string, primaryColor?: string, secondaryColor?: string, documents?: DealDocument[] }) {
+  const diffs = diffWords(original, current);
+  
+  const htmlContent = diffs.map((part) => {
+    if (part.added) {
+      return `<mark class="bg-emerald-200/70 text-emerald-900 px-0.5 rounded-sm">${part.value}</mark>`;
+    }
+    if (part.removed) {
+      return `<del class="bg-red-200/70 text-red-900 px-0.5 rounded-sm decoration-red-900/50">${part.value}</del>`;
+    }
+    return part.value;
+  }).join('');
+
+  return (
+    <MarkdownRenderer 
+      content={htmlContent} 
+      primaryColor={primaryColor} 
+      secondaryColor={secondaryColor} 
+      documents={documents} 
+    />
+  );
+}
+
 function MarkdownRenderer({ content, primaryColor, secondaryColor, documents }: { content: string, primaryColor?: string, secondaryColor?: string, documents?: DealDocument[] }) {
   // Lazy import react-markdown
   const [ReactMarkdown, setReactMarkdown] = useState<any>(null);
   const [remarkGfm, setRemarkGfm] = useState<any>(null);
+  const [rehypeRaw, setRehypeRaw] = useState<any>(null);
 
   useEffect(() => {
     Promise.all([
       import("react-markdown"),
       import("remark-gfm"),
-    ]).then(([md, gfm]) => {
+      import("rehype-raw"),
+    ]).then(([md, gfm, raw]) => {
       setReactMarkdown(() => md.default);
       setRemarkGfm(() => gfm.default);
+      setRehypeRaw(() => raw.default);
     });
   }, []);
 
@@ -1416,6 +1456,7 @@ function MarkdownRenderer({ content, primaryColor, secondaryColor, documents }: 
   return (
     <ReactMarkdown 
       remarkPlugins={remarkGfm ? [remarkGfm] : []}
+      rehypePlugins={rehypeRaw ? [rehypeRaw] : []}
       components={{
         table: (props: any) => <CustomTable {...props} primaryColor={primaryColor} secondaryColor={secondaryColor} />,
         a: (props: any) => <a {...props} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline hover:text-blue-800 font-medium transition-colors" />,

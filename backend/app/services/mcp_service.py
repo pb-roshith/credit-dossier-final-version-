@@ -155,6 +155,7 @@ class MCPClientService:
                 return result
 
             except (httpx.RemoteProtocolError, httpx.ReadError,
+                    httpx.ConnectTimeout, httpx.ReadTimeout,
                     ConnectionError, OSError, BrokenPipeError,
                     asyncio.TimeoutError) as e:
                 last_exception = e
@@ -167,11 +168,38 @@ class MCPClientService:
                 if attempt < MAX_RETRIES:
                     await asyncio.sleep(delay)
 
-            except Exception as e:
-                # Non-transient error (e.g. McpError from bad tool call)
-                logger.error(f"MCP tool call {tool_name} failed (non-transient): {e}")
-                cls._record_failure()
-                raise
+            except BaseException as e:
+                # The MCP SSE client wraps errors in ExceptionGroup via TaskGroup.
+                # Unwrap to check if the underlying cause is a transient error.
+                _transient_types = (
+                    httpx.ConnectTimeout, httpx.ReadTimeout,
+                    httpx.RemoteProtocolError, httpx.ReadError,
+                    ConnectionError, OSError, BrokenPipeError,
+                    asyncio.TimeoutError,
+                )
+                is_transient = False
+                if isinstance(e, (ExceptionGroup, BaseExceptionGroup)):
+                    is_transient = any(
+                        isinstance(sub, _transient_types)
+                        for sub in e.exceptions
+                    )
+
+                if is_transient:
+                    last_exception = e
+                    delay = BASE_RETRY_DELAY * (2 ** (attempt - 1))
+                    logger.warning(
+                        f"MCP call {tool_name} attempt {attempt}/{MAX_RETRIES} failed "
+                        f"(transient, wrapped in ExceptionGroup): {e}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    cls._record_failure()
+                    if attempt < MAX_RETRIES:
+                        await asyncio.sleep(delay)
+                else:
+                    # Non-transient error (e.g. McpError from bad tool call)
+                    logger.error(f"MCP tool call {tool_name} failed (non-transient): {e}")
+                    cls._record_failure()
+                    raise
 
         # All retries exhausted
         cls.is_connected = False

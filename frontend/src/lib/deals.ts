@@ -69,6 +69,7 @@ export type Section = {
   state: "pending" | "ready";
   order_index: number;
   generated_content: string | null;
+  original_generated_content: string | null;
   custom_instructions: string | null;
   accuracy_score: number | null;
   accuracy_details: {

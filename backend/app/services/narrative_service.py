@@ -127,6 +127,7 @@ class NarrativeService:
 
         # Update section
         section.generated_content = content
+        section.original_generated_content = content
         section.state = "ready"
         section.orchestration_strategy = orchestration.to_strategy_text()
 
@@ -353,6 +354,7 @@ class NarrativeService:
             )
             if section:
                 section.generated_content = result["generated_content"]
+                section.original_generated_content = result["generated_content"]
                 if result["success"]:
                     section.state = "ready"
                 accuracy = result.get("accuracy")
