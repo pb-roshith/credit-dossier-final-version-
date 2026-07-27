@@ -29,6 +29,7 @@ from app.services.mistral_library_service import MistralLibraryService
 from app.services.moderation_service import ModerationService
 from app.services.orchestration_service import OrchestrationService, OrchestrationResult
 from app.services.mcp_service import MCPClientService
+from app.telemetry import get_tracer, set_span_attributes
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,24 @@ class NarrativeService:
             section.custom_instructions = custom_instructions
 
         total_start = time.time()
+        tracer = get_tracer()
+
+        # Start pipeline-level parent span — all child spans nest under this
+        span_ctx = None
+        span = None
+        if tracer:
+            span_ctx = tracer.start_as_current_span("generate_section_pipeline")
+            span = span_ctx.__enter__()
+            set_span_attributes(span,
+                operation="generate_section_pipeline",
+                deal_id=deal_id,
+                section_id=section_id,
+                section_key=section.section_key,
+                section_title=section.title,
+                customer=deal.customer or "",
+                has_custom_instructions=str(bool(section.custom_instructions)),
+                has_output_template=str(bool(section.output_template)),
+            )
 
         # ── Step 1: Moderation Gate ──────────────────────────────
         if section.custom_instructions or section.output_template:
@@ -185,6 +204,19 @@ class NarrativeService:
 
         db.commit()
         db.refresh(section)
+
+        # Close the pipeline span with final metrics
+        if span:
+            set_span_attributes(span,
+                result="success",
+                content_length=str(len(content)),
+                accuracy_score=str(accuracy["score"]) if accuracy else "N/A",
+                orchestration_confidence=str(orchestration.confidence),
+                total_ms=str(round(total_ms)),
+            )
+        if span_ctx:
+            span_ctx.__exit__(None, None, None)
+
         return section, orchestration.to_strategy_text()
 
     # ── Draft All (Parallel) ───────────────────────────────────────
@@ -213,6 +245,23 @@ class NarrativeService:
 
         has_docs = len(deal.library_files) > 0
         batch_start = time.time()
+        tracer = get_tracer()
+
+        # Start batch-level parent span
+        batch_span_ctx = None
+        batch_span = None
+        if tracer:
+            batch_span_ctx = tracer.start_as_current_span("draft_all_pipeline")
+            batch_span = batch_span_ctx.__enter__()
+            set_span_attributes(batch_span,
+                operation="draft_all_pipeline",
+                deal_id=deal_id,
+                customer=deal.customer or "",
+                section_count=str(len(deal.sections)),
+                has_library_docs=str(has_docs),
+                gen_semaphore=str(settings.GENERATION_SEMAPHORE),
+                orch_semaphore=str(settings.ORCHESTRATION_SEMAPHORE),
+            )
 
         # ── Pre-fetch MCP summaries ONCE for the entire batch ────
         mcp_summaries = ""
@@ -398,6 +447,17 @@ class NarrativeService:
         db.add(audit)
 
         db.commit()
+
+        # Close the batch-level span with summary
+        if batch_span:
+            set_span_attributes(batch_span,
+                result="completed",
+                succeeded=str(succeeded),
+                failed=str(len(results) - succeeded),
+                total_batch_ms=str(round(batch_ms)),
+            )
+        if batch_span_ctx:
+            batch_span_ctx.__exit__(None, None, None)
 
         return list(results)
 

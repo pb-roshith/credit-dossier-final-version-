@@ -16,19 +16,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.config import settings
+from app.telemetry import get_tracer, set_span_attributes, set_gen_ai_attributes
 
 logger = logging.getLogger(__name__)
 
-# Lazy Mistral client (shared with mistral_library_service)
-_mistral_client = None
-
-
+# Use shared Mistral client from mistral_library_service (has telemetry configured)
 def _get_client():
-    global _mistral_client
-    if _mistral_client is None:
-        from mistralai.client import Mistral
-        _mistral_client = Mistral(api_key=settings.MISTRAL_API_KEY)
-    return _mistral_client
+    from app.services.mistral_library_service import _get_client as _get_shared_client
+    return _get_shared_client()
 
 
 # Model to use for moderation
@@ -64,6 +59,22 @@ class ModerationService:
             return ModerationResult(is_safe=True)
 
         client = _get_client()
+        tracer = get_tracer()
+
+        # Start telemetry span
+        span_ctx = None
+        span = None
+        if tracer:
+            span_ctx = tracer.start_as_current_span("moderation_check")
+            span = span_ctx.__enter__()
+            set_span_attributes(span,
+                operation="moderation_check",
+                content_length=str(len(text)),
+            )
+            set_gen_ai_attributes(span,
+                system="mistral",
+                request_model=MODERATION_MODEL,
+            )
 
         try:
             response = await client.classifiers.moderate_async(
@@ -121,6 +132,15 @@ class ModerationService:
             else:
                 logger.info("Content passed moderation check")
 
+            # Record moderation result in span
+            if span:
+                set_span_attributes(span,
+                    result="flagged" if not is_safe else "safe",
+                    flagged_categories=", ".join(flagged_categories) if flagged_categories else "none",
+                )
+            if span_ctx:
+                span_ctx.__exit__(None, None, None)
+
             return ModerationResult(
                 is_safe=is_safe,
                 flagged_categories=flagged_categories,
@@ -129,6 +149,10 @@ class ModerationService:
 
         except Exception as e:
             logger.error(f"Moderation API call failed: {e}")
+            if span:
+                set_span_attributes(span, result="error", error=str(e))
+            if span_ctx:
+                span_ctx.__exit__(type(e), e, e.__traceback__)
             # On API failure, default to safe to avoid blocking
             # (fail-open policy — can be changed to fail-closed)
             return ModerationResult(

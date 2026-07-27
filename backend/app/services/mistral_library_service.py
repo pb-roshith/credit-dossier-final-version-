@@ -21,6 +21,12 @@ from app.models.deal import Deal
 from app.models.mistral_agent import MistralAgent
 from app.models.library_file import LibraryFile
 from app.agents.instructions import get_instructions
+from app.telemetry import (
+    setup_telemetry,
+    get_tracer,
+    set_span_attributes,
+    set_gen_ai_attributes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +48,8 @@ def _get_client():
             api_key=settings.MISTRAL_API_KEY,
             timeout_ms=_MISTRAL_TIMEOUT_MS,
         )
+        # Configure Mistral telemetry on first client creation
+        setup_telemetry(_mistral_client)
     return _mistral_client
 
 
@@ -114,11 +122,26 @@ class MistralLibraryService:
             return deal.mistral_library_id
 
         client = _get_client()
+        tracer = get_tracer()
 
-        library = await client.beta.libraries.create_async(
-            name=f"CreditDossier_{deal.customer}_{deal.id}",
-            description=f"Document library for credit dossier — {deal.customer}",
-        )
+        def _do_create():
+            return client.beta.libraries.create_async(
+                name=f"CreditDossier_{deal.customer}_{deal.id}",
+                description=f"Document library for credit dossier — {deal.customer}",
+            )
+
+        if tracer:
+            with tracer.start_as_current_span("create_library") as span:
+                set_span_attributes(span,
+                    deal_id=str(deal.id),
+                    customer=deal.customer or "",
+                    operation="create_library",
+                )
+                set_gen_ai_attributes(span, system="mistral")
+                library = await _do_create()
+                span.set_attribute("credit_dossier.library_id", library.id)
+        else:
+            library = await _do_create()
 
         deal.mistral_library_id = library.id
         db.commit()
@@ -157,16 +180,34 @@ class MistralLibraryService:
         3. Create LibraryFile record
         """
         client = _get_client()
+        tracer = get_tracer()
 
         # Ensure library exists
         if not deal.mistral_library_id:
             await MistralLibraryService.create_library(db, deal)
 
         # Upload document to Mistral library
-        uploaded = await client.beta.libraries.documents.upload_async(
-            library_id=deal.mistral_library_id,
-            file={"file_name": filename, "content": file_bytes},
-        )
+        async def _do_upload():
+            return await client.beta.libraries.documents.upload_async(
+                library_id=deal.mistral_library_id,
+                file={"file_name": filename, "content": file_bytes},
+            )
+
+        if tracer:
+            with tracer.start_as_current_span("upload_file") as span:
+                set_span_attributes(span,
+                    deal_id=str(deal.id),
+                    filename=filename,
+                    source_type=source_type,
+                    file_size_bytes=str(len(file_bytes)),
+                    library_id=deal.mistral_library_id or "",
+                    operation="upload_file",
+                )
+                set_gen_ai_attributes(span, system="mistral")
+                uploaded = await _do_upload()
+                span.set_attribute("credit_dossier.mistral_file_id", uploaded.id)
+        else:
+            uploaded = await _do_upload()
 
         logger.info(
             f"Uploaded document {filename} to Mistral library (id={uploaded.id}) "
@@ -223,60 +264,77 @@ class MistralLibraryService:
     async def initialize_global_agents(db: Session) -> None:
         """Create the 16 section agents + 1 orchestration agent on startup."""
         client = _get_client()
+        tracer = get_tracer()
         from app.services.deal_service import DEFAULT_SECTIONS
 
         logger.info("Initializing global Mistral agents...")
 
-        # ── Create 16 section-specific agents ────────────────────
-        for sec_def in DEFAULT_SECTIONS:
-            section_key = sec_def["section_key"]
-            section_title = sec_def["title"]
+        async def _do_init():
+            # ── Create 16 section-specific agents ────────────────────
+            created_count = 0
+            for sec_def in DEFAULT_SECTIONS:
+                section_key = sec_def["section_key"]
+                section_title = sec_def["title"]
 
-            existing = db.query(MistralAgent).filter(MistralAgent.section_key == section_key).first()
-            if existing:
-                continue
+                existing = db.query(MistralAgent).filter(MistralAgent.section_key == section_key).first()
+                if existing:
+                    continue
 
-            instructions = get_instructions(section_key)
-            agent = await client.beta.agents.create_async(
-                model=settings.MISTRAL_AGENT_MODEL,
-                name=f"GlobalAgent_{section_title}",
-                instructions=instructions,
-                completion_args={"temperature": 0.1},
-                tools=[{"type": "web_search"}],
-            )
-            
-            ma = MistralAgent(section_key=section_key, agent_id=agent.id)
-            db.add(ma)
-            logger.info(f"Created section agent: {section_title} ({agent.id})")
-        
-        db.commit()
-
-        # ── Create orchestration agent (fixed system prompt, dynamic user prompt) ──
-        try:
-            existing_orch = db.query(MistralAgent).filter(
-                MistralAgent.section_key == "orchestration"
-            ).first()
-
-            if not existing_orch:
-                from app.agents.orchestration_prompts import ORCHESTRATION_SYSTEM_PROMPT
-
-                orch_agent = await client.beta.agents.create_async(
+                instructions = get_instructions(section_key)
+                agent = await client.beta.agents.create_async(
                     model=settings.MISTRAL_AGENT_MODEL,
-                    name="GlobalAgent_Orchestration",
-                    instructions=ORCHESTRATION_SYSTEM_PROMPT,
+                    name=f"GlobalAgent_{section_title}",
+                    instructions=instructions,
                     completion_args={"temperature": 0.1},
-                    tools=[{"type": "web_search"}],
                 )
-                ma_orch = MistralAgent(
-                    section_key="orchestration", agent_id=orch_agent.id
+                
+                ma = MistralAgent(section_key=section_key, agent_id=agent.id)
+                db.add(ma)
+                created_count += 1
+                logger.info(f"Created section agent: {section_title} ({agent.id})")
+            
+            db.commit()
+
+            # ── Create orchestration agent (fixed system prompt, dynamic user prompt) ──
+            try:
+                existing_orch = db.query(MistralAgent).filter(
+                    MistralAgent.section_key == "orchestration"
+                ).first()
+
+                if not existing_orch:
+                    from app.agents.orchestration_prompts import ORCHESTRATION_SYSTEM_PROMPT
+
+                    orch_agent = await client.beta.agents.create_async(
+                        model=settings.MISTRAL_AGENT_MODEL,
+                        name="GlobalAgent_Orchestration",
+                        instructions=ORCHESTRATION_SYSTEM_PROMPT,
+                        completion_args={"temperature": 0.1},
+                    )
+                    ma_orch = MistralAgent(
+                        section_key="orchestration", agent_id=orch_agent.id
+                    )
+                    db.add(ma_orch)
+                    db.commit()
+                    created_count += 1
+                    logger.info(f"Created orchestration agent: {orch_agent.id}")
+                else:
+                    logger.info(f"Orchestration agent already exists: {existing_orch.agent_id}")
+            except Exception as e:
+                logger.error(f"Failed to create orchestration agent: {e}")
+
+            return created_count
+
+        if tracer:
+            with tracer.start_as_current_span("initialize_agents") as span:
+                set_span_attributes(span,
+                    operation="initialize_agents",
+                    model=settings.MISTRAL_AGENT_MODEL,
                 )
-                db.add(ma_orch)
-                db.commit()
-                logger.info(f"Created orchestration agent: {orch_agent.id}")
-            else:
-                logger.info(f"Orchestration agent already exists: {existing_orch.agent_id}")
-        except Exception as e:
-            logger.error(f"Failed to create orchestration agent: {e}")
+                set_gen_ai_attributes(span, system="mistral")
+                created = await _do_init()
+                span.set_attribute("credit_dossier.agents_created", str(created))
+        else:
+            await _do_init()
 
         logger.info("Global Mistral agents initialized.")
 
@@ -284,20 +342,35 @@ class MistralLibraryService:
     async def cleanup_global_agents(db: Session) -> None:
         """Delete all global Mistral agents on shutdown."""
         client = _get_client()
+        tracer = get_tracer()
         agents = db.query(MistralAgent).all()
-        logger.info(f"Cleaning up {len(agents)} global Mistral agents...")
-        
-        for ma in agents:
-            try:
-                if ma.section_key == "mcp_connector":
-                    await client.beta.connectors.delete_async(connector_id=ma.agent_id)
-                else:
-                    await client.beta.agents.delete_async(agent_id=ma.agent_id)
-            except Exception as e:
-                logger.warning(f"Failed to delete global agent/connector {ma.agent_id}: {e}")
-            db.delete(ma)
-            
-        db.commit()
+        agent_count = len(agents)
+        logger.info(f"Cleaning up {agent_count} global Mistral agents...")
+
+        async def _do_cleanup():
+            for ma in agents:
+                try:
+                    if ma.section_key == "mcp_connector":
+                        await client.beta.connectors.delete_async(connector_id=ma.agent_id)
+                    else:
+                        await client.beta.agents.delete_async(agent_id=ma.agent_id)
+                except Exception as e:
+                    logger.warning(f"Failed to delete global agent/connector {ma.agent_id}: {e}")
+                db.delete(ma)
+                
+            db.commit()
+
+        if tracer:
+            with tracer.start_as_current_span("cleanup_agents") as span:
+                set_span_attributes(span,
+                    operation="cleanup_agents",
+                    agent_count=str(agent_count),
+                )
+                set_gen_ai_attributes(span, system="mistral")
+                await _do_cleanup()
+        else:
+            await _do_cleanup()
+
         logger.info("Global Mistral agents cleaned up.")
 
     @staticmethod
@@ -361,6 +434,7 @@ class MistralLibraryService:
             Generated content string (markdown)
         """
         client = _get_client()
+        tracer = get_tracer()
 
         # Build the user message
         user_parts = [
@@ -403,7 +477,31 @@ class MistralLibraryService:
 
         logger.info(f"Generating with agent {agent_id} for section: {section_title}")
 
+        # Determine generation mode for span attributes
+        gen_mode = "few-shot" if custom_instructions else "zero-shot"
+        has_template = bool(output_template and output_template.strip())
+        has_orch = bool(orchestration_strategy and orchestration_strategy.strip())
+
         try:
+            # Wrap the entire generation in a telemetry span
+            span_ctx = None
+            if tracer:
+                span_ctx = tracer.start_as_current_span("generate_section")
+                span = span_ctx.__enter__()
+                set_span_attributes(span,
+                    operation="generate_section",
+                    section_title=section_title,
+                    agent_id=agent_id,
+                    generation_mode=gen_mode,
+                    has_template=str(has_template),
+                    has_orchestration=str(has_orch),
+                )
+                set_gen_ai_attributes(span,
+                    agent_name=f"section_agent_{section_title}",
+                    system="mistral",
+                    request_model=settings.MISTRAL_AGENT_MODEL,
+                )
+
             response = await _call_with_retry(
                 lambda: client.agents.complete_async(
                     agent_id=agent_id,
@@ -422,6 +520,8 @@ class MistralLibraryService:
                 # Retry once with slightly different prompt
                 logger.warning(f"Empty response from agent {agent_id}, retrying...")
                 messages[0]["content"] += "\n\nPlease generate the complete section now."
+                if tracer and span_ctx:
+                    span.set_attribute("credit_dossier.retried", "true")
                 response = await _call_with_retry(
                     lambda: client.agents.complete_async(
                         agent_id=agent_id,
@@ -435,6 +535,9 @@ class MistralLibraryService:
                     content = response.choices[0].messages[-1].content
 
             if not content:
+                if tracer and span_ctx:
+                    span.set_attribute("credit_dossier.result", "empty")
+                    span_ctx.__exit__(None, None, None)
                 return f"[Generation failed — agent returned no content for {section_title}]"
 
             # Normalize content — Mistral may return a list of content blocks
@@ -462,10 +565,22 @@ class MistralLibraryService:
             
             content = content.strip()
 
+            # Set result attributes on the span
+            if tracer and span_ctx:
+                set_span_attributes(span,
+                    result="success",
+                    content_length=str(len(content)),
+                )
+                span_ctx.__exit__(None, None, None)
+
             logger.info(f"Agent {agent_id} generated {len(content)} chars for {section_title}")
             return content
 
         except Exception as e:
+            if tracer and span_ctx:
+                span.set_attribute("credit_dossier.result", "error")
+                span.set_attribute("credit_dossier.error", str(e))
+                span_ctx.__exit__(type(e), e, e.__traceback__)
             logger.error(f"Agent generation failed for {section_title}: {e}")
             raise
 
@@ -489,6 +604,7 @@ class MistralLibraryService:
 
         import json
         client = _get_client()
+        tracer = get_tracer()
 
         evaluator_prompt = (
             "You are an accuracy evaluator for AI-generated credit analysis narratives. "
@@ -525,6 +641,22 @@ class MistralLibraryService:
             "Evaluate the accuracy. Return ONLY the JSON object."
         )
 
+        # Start telemetry span for accuracy evaluation
+        span_ctx = None
+        span = None
+        if tracer:
+            span_ctx = tracer.start_as_current_span("evaluate_accuracy")
+            span = span_ctx.__enter__()
+            set_span_attributes(span,
+                operation="evaluate_accuracy",
+                section_title=section_title,
+                content_length=str(len(generated_content)),
+            )
+            set_gen_ai_attributes(span,
+                system="mistral",
+                request_model=settings.MISTRAL_MODEL,
+            )
+
         try:
             response = await _call_with_retry(
                 lambda: client.chat.complete_async(
@@ -559,16 +691,32 @@ class MistralLibraryService:
                 "summary": str(result.get("summary", "Assessment completed.")),
             }
 
+            # Record accuracy result in span
+            if span:
+                set_span_attributes(span,
+                    accuracy_score=str(score),
+                    grounded_claims=str(accuracy["grounded_claims"]),
+                    unsupported_claims=str(accuracy["unsupported_claims"]),
+                    result="success",
+                )
+
             logger.info(
                 f"Accuracy for {section_title}: score={accuracy['score']}%, "
                 f"grounded={accuracy['grounded_claims']}, "
                 f"inferred={accuracy['inferred_claims']}, "
                 f"unsupported={accuracy['unsupported_claims']}"
             )
+
+            if span_ctx:
+                span_ctx.__exit__(None, None, None)
             return accuracy
 
         except json.JSONDecodeError as e:
             logger.warning(f"Accuracy evaluator returned invalid JSON: {e}")
+            if span:
+                span.set_attribute("credit_dossier.result", "json_error")
+            if span_ctx:
+                span_ctx.__exit__(type(e), e, e.__traceback__)
             return {
                 "score": 0,
                 "grounded_claims": 0,
@@ -578,6 +726,10 @@ class MistralLibraryService:
             }
         except Exception as e:
             logger.error(f"Accuracy evaluation failed for {section_title}: {e}")
+            if span:
+                set_span_attributes(span, result="error", error=str(e))
+            if span_ctx:
+                span_ctx.__exit__(type(e), e, e.__traceback__)
             return {
                 "score": 0,
                 "grounded_claims": 0,

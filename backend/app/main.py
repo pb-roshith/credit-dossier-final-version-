@@ -3,6 +3,16 @@ FastAPI application entry point.
 Mounts all routers and configures CORS for frontend integration.
 """
 
+# CRITICAL: Override system-level OTEL_SDK_DISABLED=true BEFORE any OTel imports.
+# Without this, all TracerProviders return NoOpTracer and no traces are exported.
+import os
+os.environ["OTEL_SDK_DISABLED"] = "false"
+
+# Load .env into OS environment — Mistral SDK reads MISTRAL_SDK_TELEMETRY
+# from os.environ (pydantic-settings only loads into its own model, not os.environ)
+from dotenv import load_dotenv
+load_dotenv()
+
 import logging
 from contextlib import asynccontextmanager
 
@@ -73,10 +83,16 @@ async def lifespan(app: FastAPI):
         db.close()
 
     total_ms = (time.time() - t0) * 1000
+
+    # Report telemetry status
+    from app.telemetry import is_telemetry_enabled
+    telemetry_status = 'enabled' if is_telemetry_enabled() else 'disabled'
+
     logger.info(
         f"=== Startup complete in {total_ms:.0f}ms ==="
         f" | MCP={'connected' if MCPClientService.is_connected else 'disconnected'}"
         f" | Orchestration={'enabled' if settings.ORCHESTRATION_ENABLED else 'disabled'}"
+        f" | Telemetry={telemetry_status}"
         f" | Gen semaphore={settings.GENERATION_SEMAPHORE}"
         f" | Orch semaphore={settings.ORCHESTRATION_SEMAPHORE}"
     )
@@ -138,12 +154,15 @@ def health_check():
     finally:
         db.close()
 
+    from app.telemetry import is_telemetry_enabled
+
     return {
         "status": "ok",
         "service": "Credit Dossier API",
         "version": "2.0.0",
         "agents_initialized": agent_count,
         "orchestration_enabled": settings.ORCHESTRATION_ENABLED,
+        "telemetry_enabled": is_telemetry_enabled(),
         "generation_semaphore": settings.GENERATION_SEMAPHORE,
         "orchestration_semaphore": settings.ORCHESTRATION_SEMAPHORE,
         "mcp": MCPClientService.get_health_status(),

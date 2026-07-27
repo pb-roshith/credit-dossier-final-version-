@@ -21,6 +21,7 @@ from typing import Any
 
 from app.config import settings
 from app.models.deal import Deal, Section
+from app.telemetry import get_tracer, set_span_attributes, set_gen_ai_attributes
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +266,7 @@ class OrchestrationService:
             )
 
         start = time.time()
+        tracer = get_tracer()
 
         # Build prompts
         from app.agents.orchestration_prompts import build_orchestration_user_prompt
@@ -324,6 +326,20 @@ class OrchestrationService:
             result.elapsed_ms = (time.time() - start) * 1000
 
             doc_names = [doc.get("title", "Unknown") for doc in result.recommended_documents]
+
+            # Record orchestration result in telemetry span
+            if tracer:
+                with tracer.start_as_current_span("orchestration_select_documents") as span:
+                    set_span_attributes(span,
+                        operation="orchestration_select_documents",
+                        section_key=section.section_key,
+                        customer=deal.customer or "",
+                        confidence=str(result.confidence),
+                        documents_recommended=str(len(result.recommended_documents)),
+                        elapsed_ms=str(round(result.elapsed_ms)),
+                    )
+                    set_gen_ai_attributes(span, system="mistral")
+
             logger.info(
                 f"Orchestration for {section.section_key}: "
                 f"{len(result.recommended_documents)} docs recommended: {doc_names}, "
