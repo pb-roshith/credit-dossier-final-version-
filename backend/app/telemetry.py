@@ -4,7 +4,6 @@ Telemetry Module — centralized Mistral observability + local trace logging.
 Provides:
 - configure_telemetry() on the shared Mistral client (redaction=True, provider="dedicated")
 - get_telemetry_tracer() for manual span instrumentation across services
-- Optional MLflow integration when installed
 - Custom span attributes (credit_dossier.*) for filtering on the Mistral dashboard
 
 Mistral SDK API (v2.7+):
@@ -56,9 +55,6 @@ def setup_telemetry(client: "Mistral") -> None:
             "tracer=credit-dossier-api)"
         )
 
-        # Set up additional trace logging (MLflow if available)
-        _setup_trace_logging()
-
     except ImportError as e:
         logger.warning(
             f"Mistral observability extras not available: {e}. "
@@ -68,30 +64,36 @@ def setup_telemetry(client: "Mistral") -> None:
         logger.error(f"Failed to configure Mistral telemetry: {e}", exc_info=True)
 
 
-def _setup_trace_logging() -> None:
+def init_phoenix_telemetry(project_name: str = "credit-dossier-api") -> None:
     """
-    Configure optional MLflow trace logging alongside Mistral's backend.
-
-    Traces always flow to Mistral's dedicated dashboard regardless.
-    MLflow adds a local trace UI for deeper analysis.
+    Initializes OpenTelemetry tracing globally for Arize Phoenix.
+    Automatically reads PHOENIX_API_KEY and PHOENIX_COLLECTOR_ENDPOINT from env.
+    Uses OpenInference to instrument the Mistral client and send LLM traces to Phoenix.
+    This runs alongside Mistral's native dedicated telemetry.
     """
     try:
-        import mlflow
+        from phoenix.otel import register
+        from openinference.instrumentation.mistralai import MistralAIInstrumentor
 
-        mlflow.set_experiment("credit-dossier-telemetry")
-        mlflow.opentelemetry.autolog()
-
-        logger.info(
-            "MLflow trace logging enabled (experiment=credit-dossier-telemetry). "
-            "View traces at: mlflow ui --port 5000"
+        # 1. Register Phoenix as the global OpenTelemetry provider
+        tracer_provider = register(
+            project_name=project_name,
+            set_global_tracer_provider=True,
+            batch=False  # Good for local development/immediate visibility
         )
-    except ImportError:
-        logger.info(
-            "MLflow not installed — traces flow to Mistral's dashboard only. "
-            "Install mlflow for local trace UI: pip install mlflow"
+
+        # 2. Enable Auto-Instrumentation for LLM SDKs
+        MistralAIInstrumentor().instrument(tracer_provider=tracer_provider)
+        
+        logger.info(f"✓ Phoenix OpenInference telemetry configured (project={project_name})")
+
+    except ImportError as e:
+        logger.warning(
+            f"Phoenix instrumentation not available: {e}. "
+            f"Install with: pip install arize-phoenix-otel openinference-instrumentation-mistralai"
         )
     except Exception as e:
-        logger.warning(f"MLflow setup failed ({e}) — traces flow to Mistral only")
+        logger.error(f"Failed to configure Phoenix telemetry: {e}", exc_info=True)
 
 
 def get_tracer():

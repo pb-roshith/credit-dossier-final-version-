@@ -48,6 +48,8 @@ async def lifespan(app: FastAPI):
 
     t0 = time.time()
     logger.info("=== Credit Dossier API Starting ===")
+    from app.telemetry import init_phoenix_telemetry
+    init_phoenix_telemetry(project_name="credit-dossier-api")
 
     # Step 1: Database
     t_step = time.time()

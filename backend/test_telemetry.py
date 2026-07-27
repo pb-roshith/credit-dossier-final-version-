@@ -34,26 +34,16 @@ if not API_KEY or API_KEY == "your_mistral_api_key_here":
 # 1. Initialize client & telemetry (v2.7+ API)
 from mistralai.client import Mistral
 from mistralai.extra.observability import configure_telemetry, get_telemetry_tracer
+from app.telemetry import init_phoenix_telemetry
+
+# Start Phoenix trace provider for this script
+init_phoenix_telemetry("credit-dossier-test")
 
 client = Mistral(api_key=API_KEY)
 configure_telemetry(client, provider="dedicated", redaction=True)
 tracer = get_telemetry_tracer(client, "credit-dossier-test")
 
 print("✓ Mistral client created with telemetry (provider=dedicated, redaction=True)")
-
-
-# 2. Set up MLflow logging (optional — skips gracefully if not installed)
-try:
-    import mlflow
-    mlflow.set_experiment("credit-dossier-telemetry-test")
-    mlflow.opentelemetry.autolog()
-    print("✓ MLflow trace logging enabled")
-except ImportError:
-    print("ℹ MLflow not installed — traces go to Mistral's dashboard only")
-    print("  Install later with: pip install mlflow>=2.14.0")
-except Exception as e:
-    print(f"⚠ MLflow setup failed: {e}")
-
 
 # 3. Define local tools (mock functions for testing)
 def get_current_weather(location: str) -> str:
@@ -160,5 +150,5 @@ print("    credit_dossier.tool_result")
 print()
 print("  View traces:")
 print("    • Mistral Dashboard: https://console.mistral.ai/")
-print("    • MLflow (local):    mlflow ui --port 5000")
+print("    • Arize Phoenix:     http://localhost:6006")
 print("=" * 60)

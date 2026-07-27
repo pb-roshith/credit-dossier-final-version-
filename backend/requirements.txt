@@ -40,8 +40,11 @@ python-dotenv>=1.1.0
 # Async HTTP (for URL ingestion)
 httpx>=0.28.0
 
+
 # Observability & Telemetry (installs OTel SDK + OTLP exporter)
 mistralai[telemetry]
-# Optional: install mlflow for local trace UI (heavy — ~100MB+ deps)
-# pip install mlflow>=2.14.0
+
+# Phoenix Tracing
+arize-phoenix-otel>=0.4.0
+openinference-instrumentation-mistralai>=0.1.0
 
