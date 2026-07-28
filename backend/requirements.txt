@@ -1,50 +1,63 @@
 # Web Framework
-fastapi>=0.115.0
-uvicorn[standard]>=0.34.0
+fastapi>=0.137.0
+uvicorn[standard]>=0.49.0
 
 # ORM & Database
 sqlalchemy>=2.0.0
-alembic>=1.16.0
+alembic>=1.18.0
 
 # PostgreSQL driver (optional, for production)
 # Uncomment when deploying with PostgreSQL:
 # psycopg2-binary>=2.9.0
 
 # Validation & Settings
-pydantic>=2.11.0
-pydantic-settings>=2.9.0
+pydantic>=2.13.0
+pydantic-settings>=2.14.0
 
 # File uploads
-python-multipart>=0.0.20
-aiofiles>=24.1.0
+python-multipart>=0.0.32
+aiofiles>=25.1.0
 
 # Mistral AI SDK
-mistralai>=1.8.0
+mistralai>=2.7.0
+
+# MCP Client (Model Context Protocol)
+mcp>=1.28.0
 
 # Vector Database for RAG
-chromadb>=1.0.0
+chromadb>=1.5.0
 
 # File Processing
 PyPDF2>=3.0.0
-python-docx>=1.1.0
+pypdf>=6.13.0
+python-docx>=1.2.0
 openpyxl>=3.1.0
-chardet>=5.2.0
+chardet>=7.4.0
+PyMuPDF>=1.27.0
 
 # Document Export
 python-pptx>=1.0.0
-reportlab>=4.4.0
+reportlab>=4.5.0
+xhtml2pdf>=0.2.17
+html2docx>=1.6.0
+markdown>=3.10.0
+
+# Data Processing & Visualization
+pandas>=2.3.0
+matplotlib>=3.11.0
+
+# Image Processing
+colorthief>=0.2.1
 
 # Environment
-python-dotenv>=1.1.0
+python-dotenv>=1.2.0
 
 # Async HTTP (for URL ingestion)
 httpx>=0.28.0
-
 
 # Observability & Telemetry (installs OTel SDK + OTLP exporter)
 mistralai[telemetry]
 
 # Phoenix Tracing
-arize-phoenix-otel>=0.4.0
-openinference-instrumentation-mistralai>=0.1.0
-
+arize-phoenix-otel>=0.16.0
+openinference-instrumentation-mistralai>=2.0.0
