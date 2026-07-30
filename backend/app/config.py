@@ -6,18 +6,16 @@ Supports both SQLite (local dev) and PostgreSQL (production) via DATABASE_URL.
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-BACKEND_DIR = Path(__file__).resolve().parent.parent
-
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=BACKEND_DIR / ".env",
+        env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
     # ── Mistral AI ──────────────────────────────────────────────
-    MISTRAL_API_KEY: str
+    MISTRAL_API_KEY: str = "your_mistral_api_key_here"
     MISTRAL_MODEL: str = "mistral-large-latest"
     MISTRAL_AGENT_MODEL: str = "mistral-large-latest"
 
