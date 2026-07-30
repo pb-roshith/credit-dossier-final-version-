@@ -55,6 +55,8 @@ async def lifespan(app: FastAPI):
     t_step = time.time()
     logger.info("[startup] Creating database tables…")
     Base.metadata.create_all(bind=engine)
+    from app.migrations import apply_additive_migrations
+    apply_additive_migrations(engine)
     logger.info(f"[startup] Database ready ({(time.time() - t_step)*1000:.0f}ms)")
 
     from app.database import SessionLocal
