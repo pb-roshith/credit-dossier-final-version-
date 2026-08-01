@@ -45,6 +45,14 @@ class Deal(Base):
     due: Mapped[str] = mapped_column(String(16), nullable=False, default="")
 
     # Mistral Document Library (managed RAG)
+    # Company source library is read-only and shared across the client's deals.
+    company_mistral_library_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
+    company_document_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    # Deal library contains only documents uploaded specifically to this deal.
     mistral_library_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     library_sync_status: Mapped[str] = mapped_column(String(32), nullable=False, default="not_started")
 
@@ -102,6 +110,7 @@ class Section(Base):
     # AI-generated content
     generated_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_generated_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    final_generated_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     custom_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Accuracy assessment (set after generation)

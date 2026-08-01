@@ -1,8 +1,8 @@
 """
-Library API router — centralized document library management via Mistral.
+Deal-specific upload library management via Mistral.
 
-All documents are uploaded to one shared Mistral Library per deal.
-Every section's agent can search the entire library for RAG.
+Company documents stay in their registered source library. Files handled here
+belong only to this deal; generation searches both libraries together.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
@@ -166,7 +166,10 @@ async def upload_to_library(
         )
 
     # ── Sync all agents to this deal's library after upload ──
-    await MistralLibraryService.sync_agents_to_library(db, deal.mistral_library_id)
+    await MistralLibraryService.sync_agents_to_libraries(
+        db,
+        MistralLibraryService.library_ids_for_deal(deal),
+    )
 
     return lib_file
 

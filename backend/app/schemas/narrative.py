@@ -29,3 +29,22 @@ class DraftAllResponse(BaseModel):
     succeeded: int
     failed: int
 
+
+class DraftSectionProgress(BaseModel):
+    section_id: str
+    title: str
+    status: str
+    stage: str
+
+
+class DraftAllJobResponse(BaseModel):
+    job_id: str
+    deal_id: str
+    status: str
+    percent: int
+    completed: int
+    failed: int
+    total: int
+    sections: list[DraftSectionProgress]
+    error: Optional[str] = None
+

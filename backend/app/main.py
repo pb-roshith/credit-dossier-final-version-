@@ -23,7 +23,7 @@ from app.config import settings
 from app.database import engine, Base
 from app.models import Deal, Section, AuditEntry, Version, Upload  # noqa: F401
 from app.models import DealDocument, SectionDocumentLink  # noqa: F401 — register models
-from app.models import MistralAgent, LibraryFile  # noqa: F401 — register new models
+from app.models import MistralAgent, LibraryFile, NarrativeVersion  # noqa: F401
 from app.routers.deals import router as deals_router
 from app.routers.sections import router as sections_router
 from app.routers.versions import router as versions_router
@@ -32,6 +32,7 @@ from app.routers.exports import router as exports_router
 from app.routers.documents import router as documents_router
 from app.routers.library import router as library_router
 from app.routers.mcp import router as mcp_router
+from app.routers.manufacture import router as manufacture_router
 
 # Configure logging
 logging.basicConfig(
@@ -144,6 +145,7 @@ app.include_router(exports_router)
 app.include_router(documents_router)
 app.include_router(library_router)
 app.include_router(mcp_router)
+app.include_router(manufacture_router)
 
 
 @app.get("/api/health")

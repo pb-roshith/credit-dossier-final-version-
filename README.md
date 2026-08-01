@@ -144,3 +144,26 @@ See the full API documentation at `/docs` when the backend is running.
 ## 📄 License
 
 Private repository. All rights reserved.
+
+## Local MCP and manufactured data
+
+The repository includes a local company-document MCP in `mcp/`. It replaces
+the remote company-document dependency with:
+
+- a local SSE endpoint at `http://127.0.0.1:8001/sse`;
+- 17 synthetic credit PDFs stored in a Mistral Document Library; and
+- 16 structured credit tables stored in local PostgreSQL.
+
+Configure and start it before the backend:
+
+```powershell
+cd mcp
+Copy-Item .env.example .env
+# Edit .env with PostgreSQL credentials and MISTRAL_API_KEY
+pip install -r requirements.txt
+python server.py
+```
+
+The application header includes **Manufacture Data**, which starts a background
+job to create a consistent synthetic data pack for a company. See
+`mcp/README.md` for PostgreSQL container and command-line instructions.

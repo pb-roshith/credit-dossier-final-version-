@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -28,7 +29,7 @@ class DocumentSummary:
 
 # ── Constants ──────────────────────────────────────────────────────
 
-MCP_SSE_URL = "https://companydocmcpserver-production.up.railway.app/sse"
+MCP_SSE_URL = os.getenv("MCP_SSE_URL", "http://127.0.0.1:8001/sse")
 MAX_RETRIES = 3
 BASE_RETRY_DELAY = 1.0  # seconds, exponential backoff base
 
@@ -37,10 +38,9 @@ class MCPClientService:
     """
     MCP client with per-call connection pattern.
 
-    Instead of holding a long-lived SSE connection (which Railway kills after
-    ~5 min of inactivity), each tool call opens a fresh SSE connection, executes
-    the tool, and closes the connection. This completely eliminates idle-timeout
-    disconnections.
+    Instead of holding a long-lived SSE connection, each tool call opens a fresh
+    local connection, executes the tool, and closes the connection. This keeps
+    backend restarts and local MCP restarts independent.
 
     Features:
     - Per-call SSE connections (no idle timeout issues)
@@ -54,6 +54,7 @@ class MCPClientService:
 
     # ── TTL Cache for document summaries ────────────────────────
     _summary_cache: Dict[str, tuple[str, float]] = {}  # key → (data, timestamp)
+    _structured_cache: Dict[str, tuple[Dict[str, Any], float]] = {}
 
     # ── Circuit Breaker ────────────────────────────────────────
     _consecutive_failures: int = 0
@@ -119,6 +120,7 @@ class MCPClientService:
         """Clean up state. No persistent connection to close."""
         cls.is_connected = False
         cls._summary_cache.clear()
+        cls._structured_cache.clear()
         logger.info("MCP client state reset (disconnected).")
 
     # ── Per-Call Tool Execution ─────────────────────────────────
@@ -324,12 +326,61 @@ class MCPClientService:
         return summaries
 
     @classmethod
+    async def get_structured_data(
+        cls,
+        company_name: str,
+        rows_per_table: int = 20,
+    ) -> Dict[str, Any]:
+        """Fetch all available PostgreSQL credit-table data in one MCP call."""
+        if cls._is_circuit_open():
+            return {}
+        try:
+            result = await cls._call_tool(
+                "retrieve_company_structured_data",
+                {
+                    "company_name": company_name,
+                    "rows_per_table": rows_per_table,
+                },
+            )
+            if result and result.content:
+                data = json.loads(result.content[0].text)
+                return data if isinstance(data, dict) else {}
+        except Exception as e:
+            logger.error(
+                "Error fetching structured data for %s: %s",
+                company_name,
+                e,
+            )
+        return {}
+
+    @classmethod
+    async def get_structured_data_cached(
+        cls,
+        company_name: str,
+        ttl_seconds: int | None = None,
+    ) -> Dict[str, Any]:
+        """Fetch structured credit data with the same TTL as PDF summaries."""
+        ttl = ttl_seconds or settings.MCP_CACHE_TTL_SECONDS
+        cache_key = company_name.lower().strip()
+        now = time.time()
+        cached = cls._structured_cache.get(cache_key)
+        if cached and now - cached[1] < ttl:
+            return cached[0]
+        data = await cls.get_structured_data(company_name)
+        if data.get("tables"):
+            cls._structured_cache[cache_key] = (data, now)
+        return data
+
+    @classmethod
     def invalidate_cache(cls, company_name: str | None = None) -> None:
         """Invalidate summary cache. Pass None to clear all."""
         if company_name:
-            cls._summary_cache.pop(company_name.lower().strip(), None)
+            cache_key = company_name.lower().strip()
+            cls._summary_cache.pop(cache_key, None)
+            cls._structured_cache.pop(cache_key, None)
         else:
             cls._summary_cache.clear()
+            cls._structured_cache.clear()
 
     @classmethod
     def get_health_status(cls) -> Dict[str, Any]:
@@ -339,4 +390,5 @@ class MCPClientService:
             "circuit_breaker_open": cls._is_circuit_open(),
             "consecutive_failures": cls._consecutive_failures,
             "cache_entries": len(cls._summary_cache),
+            "structured_cache_entries": len(cls._structured_cache),
         }

@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 _ADDITIVE_MIGRATIONS: dict[str, dict[str, str]] = {
     "deals": {
         "library_sync_status": "VARCHAR(32) NOT NULL DEFAULT 'not_started'",
+        "company_mistral_library_id": "VARCHAR(128)",
+        "company_document_count": "INTEGER NOT NULL DEFAULT 0",
         "theme_palette": (
             """VARCHAR(256) NOT NULL DEFAULT '["#002060", "#800020"]'"""
         ),
@@ -24,8 +26,12 @@ _ADDITIVE_MIGRATIONS: dict[str, dict[str, str]] = {
     "sections": {
         "orchestration_strategy": "TEXT",
         "original_generated_content": "TEXT",
+        "final_generated_content": "TEXT",
         "moderation_status": "VARCHAR(16)",
         "moderation_details": "TEXT",
+    },
+    "narrative_versions": {
+        "is_final": "BOOLEAN NOT NULL DEFAULT FALSE",
     },
 }
 

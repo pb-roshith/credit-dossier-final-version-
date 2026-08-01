@@ -9,11 +9,17 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ManufactureDataRouteImport } from './routes/manufacture-data'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DealsNewRouteImport } from './routes/deals.new'
 import { Route as DealsDealIdRouteImport } from './routes/deals.$dealId'
 
+const ManufactureDataRoute = ManufactureDataRouteImport.update({
+  id: '/manufacture-data',
+  path: '/manufacture-data',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DashboardRoute = DashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -38,12 +44,14 @@ const DealsDealIdRoute = DealsDealIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
+  '/manufacture-data': typeof ManufactureDataRoute
   '/deals/$dealId': typeof DealsDealIdRoute
   '/deals/new': typeof DealsNewRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
+  '/manufacture-data': typeof ManufactureDataRoute
   '/deals/$dealId': typeof DealsDealIdRoute
   '/deals/new': typeof DealsNewRoute
 }
@@ -51,26 +59,46 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
+  '/manufacture-data': typeof ManufactureDataRoute
   '/deals/$dealId': typeof DealsDealIdRoute
   '/deals/new': typeof DealsNewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/dashboard' | '/deals/$dealId' | '/deals/new'
+  fullPaths:
+    | '/'
+    | '/dashboard'
+    | '/manufacture-data'
+    | '/deals/$dealId'
+    | '/deals/new'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/dashboard' | '/deals/$dealId' | '/deals/new'
-  id: '__root__' | '/' | '/dashboard' | '/deals/$dealId' | '/deals/new'
+  to: '/' | '/dashboard' | '/manufacture-data' | '/deals/$dealId' | '/deals/new'
+  id:
+    | '__root__'
+    | '/'
+    | '/dashboard'
+    | '/manufacture-data'
+    | '/deals/$dealId'
+    | '/deals/new'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DashboardRoute: typeof DashboardRoute
+  ManufactureDataRoute: typeof ManufactureDataRoute
   DealsDealIdRoute: typeof DealsDealIdRoute
   DealsNewRoute: typeof DealsNewRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/manufacture-data': {
+      id: '/manufacture-data'
+      path: '/manufacture-data'
+      fullPath: '/manufacture-data'
+      preLoaderRoute: typeof ManufactureDataRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dashboard': {
       id: '/dashboard'
       path: '/dashboard'
@@ -105,6 +133,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DashboardRoute: DashboardRoute,
+  ManufactureDataRoute: ManufactureDataRoute,
   DealsDealIdRoute: DealsDealIdRoute,
   DealsNewRoute: DealsNewRoute,
 }

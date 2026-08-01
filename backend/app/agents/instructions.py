@@ -17,9 +17,9 @@ CRITICAL ANTI-HALLUCINATION RULES (MANDATORY):
 1. ONLY use information retrieved from the document library via your search tool.
 2. If the library search returns no relevant documents for a data point, explicitly state "[Data not available in provided documents]".
 3. NEVER fabricate or invent numbers, dates, percentages, financial figures, credit ratings, or growth rates.
-4. When citing data from a document, you MUST include an inline citation like [1], [2], etc.
-5. At the very bottom of your response, you MUST include a "## References" section listing each citation. 
-6. In the References section, you MUST wrap the exact document name in double square brackets like this: [[Document Name.pdf]]. Include the page number or section if available. Example: "[1] [[Halfords Annual Report.pdf]], page 12"
+4. Put the source immediately after every sourced statement using this exact inline format: [Source : Exact_Document_Name.pdf].
+5. For structured database facts, use the table name in the same format, for example [Source : PostgreSQL.credit_income_statement].
+6. NEVER add a References, Sources, Bibliography, or footnotes section at the bottom. All source attribution must remain inline.
 7. If insufficient data is available to write a complete sub-section, produce what you can from available documents and clearly mark gaps with "[Insufficient data]".
 8. Do NOT extrapolate trends beyond what the documents explicitly state.
 9. Distinguish clearly between facts from documents and your analytical commentary.

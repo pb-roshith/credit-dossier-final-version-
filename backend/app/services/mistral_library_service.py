@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -38,6 +39,65 @@ _MISTRAL_TIMEOUT_MS = 300_000
 # Retry configuration for transient errors (timeouts, 5xx, connection errors)
 _MAX_RETRIES = 3
 _RETRY_BASE_DELAY = 5  # seconds
+
+
+def normalize_inline_sources(content: str) -> str:
+    """Convert legacy numbered references into inline source-name markers."""
+    reference_section = re.search(
+        r"\n{0,2}#{1,6}\s*(?:References|Sources)\b(?P<body>.*)\Z",
+        content,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not reference_section:
+        return content.strip()
+
+    references: dict[str, str] = {}
+    for number, document_name in re.findall(
+        r"\[(\d{1,2})\]\s*\[\[([^\]]+)\]\]",
+        reference_section.group("body"),
+    ):
+        references[number] = document_name.strip()
+
+    narrative = content[: reference_section.start()].rstrip()
+    for number, document_name in references.items():
+        narrative = re.sub(
+            rf"[ \t]*\[{re.escape(number)}\]",
+            f" [Source : {document_name}]",
+            narrative,
+        )
+    return narrative.strip()
+
+
+def clean_generation_artifacts(content: str) -> tuple[str, bool]:
+    """Remove internal library-search traces and report whether any leaked."""
+    patterns = (
+        r'(?im)^[ \t]*\{[ \t]*["\']query["\'][ \t]*:[^\r\n}]*\}[ \t]*$',
+        r"(?im)^[ \t]*(?:searching|search query)\b[^\r\n]*$",
+    )
+    leaked = any(re.search(pattern, content) for pattern in patterns)
+    for pattern in patterns:
+        content = re.sub(pattern, "", content)
+    content = re.sub(r"\n{3,}", "\n\n", content)
+    return content.strip(), leaked
+
+
+def repair_inline_source_markers(content: str) -> str:
+    """Repair source markers split or partially emitted by the model."""
+    malformed_source = re.compile(
+        r"(?m)\n[ \t]*:[ \t]*(?P<source>[^\r\n|\]]+?)[ \t]*\]?[ \t]*(?=$|\n|\|)"
+    )
+
+    def replace_source(match: re.Match[str]) -> str:
+        source = match.group("source").strip().rstrip(".")
+        return f" [Source : {source}]"
+
+    content = malformed_source.sub(replace_source, content)
+    content = re.sub(
+        r"(?im)^[ \t]*data for ([^\r\n]+?)[.]?[ \t]*$",
+        r"[Insufficient data for \1.]",
+        content,
+    )
+    return content.strip()
 
 
 def _get_client():
@@ -109,6 +169,18 @@ async def _call_with_retry(coro_factory, description: str = "Mistral API call"):
 class MistralLibraryService:
     """Manages Mistral Libraries, Agents, and RAG-based generation."""
 
+    @staticmethod
+    async def get_document_download_url(
+        library_id: str,
+        document_id: str,
+    ) -> str:
+        """Resolve a Mistral Library document to a temporary HTTPS URL."""
+        client = _get_client()
+        return await client.beta.libraries.documents.get_signed_url_async(
+            library_id=library_id,
+            document_id=document_id,
+        )
+
     # ── Library Management ─────────────────────────────────────────
 
     @staticmethod
@@ -160,6 +232,30 @@ class MistralLibraryService:
             logger.info(f"Deleted Mistral Library {library_id}")
         except Exception as e:
             logger.warning(f"Failed to delete Mistral Library {library_id}: {e}")
+
+    @staticmethod
+    def library_ids_for_deal(deal: Deal) -> list[str]:
+        """Return source and deal-upload libraries without duplicate IDs."""
+        library_ids: list[str] = []
+        if deal.company_mistral_library_id:
+            library_ids.append(deal.company_mistral_library_id)
+
+        # Older deals may still have copied MCP files in their deal library.
+        # Do not search that duplicate library unless it also has deal uploads.
+        deal_files = list(getattr(deal, "library_files", []) or [])
+        has_deal_specific_files = any(
+            item.source_type != "mcp_auto" for item in deal_files
+        )
+        if (
+            deal.mistral_library_id
+            and (
+                not deal.company_mistral_library_id
+                or has_deal_specific_files
+            )
+            and deal.mistral_library_id not in library_ids
+        ):
+            library_ids.append(deal.mistral_library_id)
+        return library_ids
 
     # ── File Upload to Library ─────────────────────────────────────
 
@@ -258,6 +354,65 @@ class MistralLibraryService:
         db.commit()
         return True
 
+    @staticmethod
+    async def remove_legacy_mcp_copies(db: Session, deal: Deal) -> int:
+        """Delete MCP files copied by the old sync pipeline after direct linking."""
+        if not deal.company_mistral_library_id or not deal.mistral_library_id:
+            return 0
+        if deal.company_mistral_library_id == deal.mistral_library_id:
+            return 0
+
+        copied_files = (
+            db.query(LibraryFile)
+            .filter(
+                LibraryFile.deal_id == deal.id,
+                LibraryFile.source_type == "mcp_auto",
+            )
+            .all()
+        )
+        if not copied_files:
+            return 0
+
+        client = _get_client()
+        removed = 0
+        for library_file in copied_files:
+            try:
+                await client.beta.libraries.documents.delete_async(
+                    library_id=deal.mistral_library_id,
+                    document_id=library_file.mistral_file_id,
+                )
+            except Exception as exc:
+                # A missing remote document means the duplicate is already gone.
+                if "404" not in str(exc) and "not found" not in str(exc).lower():
+                    logger.warning(
+                        "Could not remove legacy MCP copy %s: %s",
+                        library_file.filename,
+                        exc,
+                    )
+                    continue
+            db.delete(library_file)
+            removed += 1
+
+        db.commit()
+
+        remaining = (
+            db.query(LibraryFile)
+            .filter(LibraryFile.deal_id == deal.id)
+            .count()
+        )
+        if remaining == 0 and deal.mistral_library_id:
+            empty_library_id = deal.mistral_library_id
+            await MistralLibraryService.delete_library(empty_library_id)
+            deal.mistral_library_id = None
+            db.commit()
+
+        logger.info(
+            "Removed %s legacy copied MCP files from deal %s",
+            removed,
+            deal.id,
+        )
+        return removed
+
     # ── Agent Management ───────────────────────────────────────────
 
     @staticmethod
@@ -278,6 +433,10 @@ class MistralLibraryService:
 
                 existing = db.query(MistralAgent).filter(MistralAgent.section_key == section_key).first()
                 if existing:
+                    await client.beta.agents.update_async(
+                        agent_id=existing.agent_id,
+                        instructions=get_instructions(section_key),
+                    )
                     continue
 
                 instructions = get_instructions(section_key)
@@ -374,29 +533,56 @@ class MistralLibraryService:
         logger.info("Global Mistral agents cleaned up.")
 
     @staticmethod
-    async def sync_agents_to_library(db: Session, library_id: str | None) -> None:
-        """Sync all global agents to use the given library_id (or none)."""
-        if not library_id:
+    async def sync_agents_to_libraries(
+        db: Session,
+        library_ids: list[str],
+    ) -> None:
+        """Configure all global agents to search the supplied libraries."""
+        library_ids = list(dict.fromkeys(item for item in library_ids if item))
+        if not library_ids:
             return
 
         client = _get_client()
         # Fetch all agents except the MCP connector, which is not an agent
         agents = db.query(MistralAgent).filter(MistralAgent.section_key != "mcp_connector").all()
         
-        logger.info(f"Syncing {len(agents)} global agents to library {library_id}...")
+        logger.info(
+            "Syncing %s global agents to %s libraries...",
+            len(agents),
+            len(library_ids),
+        )
 
         async def _update_one(ma: MistralAgent):
             try:
                 await client.beta.agents.update_async(
                     agent_id=ma.agent_id,
-                    tools=[{"type": "document_library", "library_ids": [library_id]}]
+                    tools=[{
+                        "type": "document_library",
+                        "library_ids": library_ids,
+                    }]
                 )
             except Exception as e:
-                logger.error(f"Failed to sync agent {ma.agent_id} to library {library_id}: {e}")
+                logger.error(
+                    "Failed to sync agent %s to libraries %s: %s",
+                    ma.agent_id,
+                    library_ids,
+                    e,
+                )
 
         import asyncio
         await asyncio.gather(*[_update_one(ma) for ma in agents])
-        logger.info(f"Successfully synced global agents to library {library_id}.")
+        logger.info("Successfully synced global agents to %s.", library_ids)
+
+    @staticmethod
+    async def sync_agents_to_library(
+        db: Session,
+        library_id: str | None,
+    ) -> None:
+        """Backward-compatible wrapper for callers with one library."""
+        await MistralLibraryService.sync_agents_to_libraries(
+            db,
+            [library_id] if library_id else [],
+        )
 
     @staticmethod
     def get_global_agent_id(db: Session, section_key: str) -> str | None:
@@ -412,6 +598,7 @@ class MistralLibraryService:
         section_description: str,
         expected_output: str,
         deal_context: str,
+        structured_data: str | None = None,
         orchestration_strategy: str | None = None,
         custom_instructions: str | None = None,
         output_template: str | None = None,
@@ -426,6 +613,7 @@ class MistralLibraryService:
             section_description: What the section covers
             expected_output: What the output should look like
             deal_context: Pre-built, section-specific deal context string
+            structured_data: Relevant company rows from PostgreSQL credit tables
             orchestration_strategy: Strategy text from OrchestrationService
             custom_instructions: User-provided style/structure instructions
             output_template: User-provided markdown template
@@ -443,6 +631,17 @@ class MistralLibraryService:
             f"Description: {section_description}",
             f"Expected Output: {expected_output}",
         ]
+
+        if structured_data and structured_data.strip():
+            user_parts.append(
+                "\n--- Structured PostgreSQL Credit Data ---\n"
+                f"{structured_data}\n"
+                "--- End Structured Data ---\n"
+                "Use these structured rows together with the PDF library. "
+                "Treat explicit table values as the primary source for numeric "
+                "financials, facilities, collateral, covenants, and exceptions. "
+                "Reconcile differences with the PDFs and do not invent missing values."
+            )
 
         # Inject orchestration strategy (from OrchestrationService)
         if orchestration_strategy and orchestration_strategy.strip():
@@ -468,7 +667,11 @@ class MistralLibraryService:
 
         user_parts.append(
             "\nSearch the document library for relevant data, "
-            "then generate the narrative. Use markdown formatting."
+            "then generate the narrative. Use markdown formatting. "
+            "Put the source directly after each sourced statement using "
+            "[Source : Exact_Document_Name.pdf], or "
+            "[Source : PostgreSQL.table_name] for structured data. "
+            "Do not add a References or Sources section at the bottom."
         )
 
         messages = [
@@ -481,6 +684,7 @@ class MistralLibraryService:
         gen_mode = "few-shot" if custom_instructions else "zero-shot"
         has_template = bool(output_template and output_template.strip())
         has_orch = bool(orchestration_strategy and orchestration_strategy.strip())
+        has_structured_data = bool(structured_data and structured_data.strip())
 
         try:
             # Wrap the entire generation in a telemetry span
@@ -495,6 +699,7 @@ class MistralLibraryService:
                     generation_mode=gen_mode,
                     has_template=str(has_template),
                     has_orchestration=str(has_orch),
+                    has_structured_data=str(has_structured_data),
                 )
                 set_gen_ai_attributes(span,
                     agent_name=f"section_agent_{section_title}",
@@ -553,17 +758,57 @@ class MistralLibraryService:
                 content = "\n".join(parts)
 
             # Strip common preambles/search logs that Mistral sometimes outputs
-            import re
             content = re.sub(r'^Searching\s*\[.*?\].*?(?=\n\n|\n#|\n\*\*|$)', '', content, flags=re.IGNORECASE|re.DOTALL)
             content = re.sub(r'^\s*Here is the.*?based on the available documents:?\s*\n*', '', content, flags=re.IGNORECASE)
-            
-            content = content.strip()
+            content, leaked_search = clean_generation_artifacts(content)
+
+            if leaked_search:
+                logger.warning(
+                    "Agent %s leaked a search query for %s; retrying complete output",
+                    agent_id,
+                    section_title,
+                )
+                messages[0]["content"] += (
+                    "\n\nYour previous attempt exposed an internal JSON search query "
+                    "and stopped early. Use document-library search internally, "
+                    "but never print queries, tool calls, JSON, or search logs. "
+                    "Return the complete final narrative for every required "
+                    "subsection, with inline [Source : source_name] markers."
+                )
+                retry_response = await _call_with_retry(
+                    lambda: client.agents.complete_async(
+                        agent_id=agent_id,
+                        messages=messages,
+                    ),
+                    description=f"Artifact-free retry for '{section_title}'",
+                )
+                retry_content = None
+                if getattr(retry_response.choices[0], "message", None):
+                    retry_content = retry_response.choices[0].message.content
+                elif (
+                    getattr(retry_response.choices[0], "messages", None)
+                    and retry_response.choices[0].messages
+                ):
+                    retry_content = retry_response.choices[0].messages[-1].content
+                if isinstance(retry_content, list):
+                    retry_content = "\n".join(
+                        part if isinstance(part, str) else (
+                            part.get("text", "") if isinstance(part, dict)
+                            else getattr(part, "text", "")
+                        )
+                        for part in retry_content
+                    )
+                if retry_content:
+                    cleaned_retry, _ = clean_generation_artifacts(retry_content)
+                    if len(cleaned_retry) > len(content):
+                        content = cleaned_retry
             
             # Strip markdown fences if the agent wrapped the entire response in them
             content = re.sub(r'^```(?:markdown)?\s*\n', '', content, flags=re.IGNORECASE)
             content = re.sub(r'\n```\s*$', '', content)
             
-            content = content.strip()
+            content = repair_inline_source_markers(content)
+            content = normalize_inline_sources(content)
 
             # Set result attributes on the span
             if tracer and span_ctx:

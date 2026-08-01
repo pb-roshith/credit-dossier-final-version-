@@ -50,7 +50,7 @@ export type LibrarySyncLog = {
   id: string;
   doc_title: string;
   doc_url: string | null;
-  status: "queued" | "downloading" | "uploading" | "completed" | "failed";
+  status: "queued" | "downloading" | "uploading" | "completed" | "failed" | "linked" | "removed";
   error: string | null;
   file_size: number | null;
   created_at: string;
@@ -135,6 +135,8 @@ export type Deal = {
   status: Status;
   library_sync_status: "not_started" | "syncing" | "ready" | "partial" | "error";
   mistral_library_id: string | null;
+  company_mistral_library_id: string | null;
+  company_document_count: number;
   created_at: string;
   updated_at: string;
   primary_color: string;
@@ -193,6 +195,64 @@ export type DraftAllResponse = {
   total: number;
   succeeded: number;
   failed: number;
+};
+
+export type DraftSectionProgress = {
+  section_id: string;
+  title: string;
+  status: "queued" | "waiting" | "running" | "completed" | "failed";
+  stage: string;
+};
+
+export type DraftAllJob = {
+  job_id: string;
+  deal_id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  percent: number;
+  completed: number;
+  failed: number;
+  total: number;
+  sections: DraftSectionProgress[];
+  error: string | null;
+};
+
+export type NarrativeVersion = {
+  id: string;
+  deal_id: string;
+  section_id: string;
+  content: string;
+  version_type: "generated" | "edited";
+  parent_version_id: string | null;
+  created_by: string;
+  is_final: boolean;
+  created_at: string;
+};
+
+export type ManufactureResult = {
+  companyName: string;
+  industry: string;
+  geography: string;
+  databaseName: string;
+  mcpUrl: string;
+  pdfCount: number;
+  generatedPdfCount: number;
+  uploadedPdfCount: number;
+  tableCount: number;
+  seededRowCount: number;
+  mistralLibraryId: string | null;
+  uploadError: string | null;
+  generatorVersion: number;
+  aiDetailedGeneration: boolean;
+  syntheticData: boolean;
+};
+
+export type ManufactureJob = {
+  job_id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  percent: number;
+  stage: string;
+  result: ManufactureResult | null;
+  error: string | null;
 };
 
 // ── Fetch helpers ──────────────────────────────────────────────
@@ -259,6 +319,15 @@ export const api = {
       request<DraftAllResponse>(`${API_BASE}/deals/${dealId}/sections/generate-all`, {
         method: "POST",
       }),
+    startGenerateAll: (dealId: string) =>
+      request<DraftAllJob>(
+        `${API_BASE}/deals/${dealId}/sections/generate-all/start`,
+        { method: "POST" },
+      ),
+    generateAllStatus: (dealId: string, jobId: string) =>
+      request<DraftAllJob>(
+        `${API_BASE}/deals/${dealId}/sections/generate-all/jobs/${jobId}`,
+      ),
     uploadTemplate: async (dealId: string, sectionId: string, formData: FormData) => {
       const res = await fetch(`${API_BASE}/deals/${dealId}/sections/${sectionId}/template`, {
         method: "POST",
@@ -281,6 +350,34 @@ export const api = {
       }>(`${API_BASE}/deals/${dealId}/sections/${sectionId}/moderate`, {
         method: "POST",
       }),
+    versions: (dealId: string, sectionId: string) =>
+      request<NarrativeVersion[]>(
+        `${API_BASE}/deals/${dealId}/sections/${sectionId}/versions`,
+      ),
+    markVersionFinal: (
+      dealId: string,
+      sectionId: string,
+      versionId: string,
+    ) =>
+      request<NarrativeVersion>(
+        `${API_BASE}/deals/${dealId}/sections/${sectionId}/versions/${versionId}/mark-final`,
+        { method: "POST" },
+      ),
+    deleteVersion: (
+      dealId: string,
+      sectionId: string,
+      versionId: string,
+    ) =>
+      request<{
+        deleted: boolean;
+        deleted_version_id: string;
+        remaining_count: number;
+        current_version_id: string | null;
+        uses_default_final: boolean;
+      }>(
+        `${API_BASE}/deals/${dealId}/sections/${sectionId}/versions/${versionId}`,
+        { method: "DELETE" },
+      ),
   },
 
   // Mistral Document Library (NEW)
@@ -413,6 +510,17 @@ export const api = {
       request<Array<{ document_name: string; document_url: string; summary?: string; size?: number; type?: string }>>(`${API_BASE}/companies/${encodeURIComponent(companyName)}/documents`),
     details: (companyName: string) =>
       request<{ industry?: string; geography?: string; segment?: string; kyc_status?: string }>(`${API_BASE}/companies/${encodeURIComponent(companyName)}/details`),
+  },
+
+  // Local MCP synthetic-data manufacturing
+  manufacture: {
+    start: (data: { company_name: string; industry: string; geography: string }) =>
+      request<ManufactureJob>(`${API_BASE}/manufacture`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    status: (jobId: string) =>
+      request<ManufactureJob>(`${API_BASE}/manufacture/${jobId}`),
   },
 };
 

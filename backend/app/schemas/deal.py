@@ -87,6 +87,7 @@ class SectionResponse(BaseModel):
     order_index: int
     generated_content: Optional[str] = None
     original_generated_content: Optional[str] = None
+    final_generated_content: Optional[str] = None
     custom_instructions: Optional[str] = None
     accuracy_score: Optional[float] = None
     accuracy_details: Optional[dict] = None
@@ -140,6 +141,20 @@ class VersionResponse(BaseModel):
     id: str
     notes: str
     status: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class NarrativeVersionResponse(BaseModel):
+    id: str
+    deal_id: str
+    section_id: str
+    content: str
+    version_type: str
+    parent_version_id: Optional[str] = None
+    created_by: str
+    is_final: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -207,6 +222,8 @@ class DealResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     mistral_library_id: Optional[str] = None
+    company_mistral_library_id: Optional[str] = None
+    company_document_count: int = 0
     library_sync_status: str
     primary_color: str
     secondary_color: str

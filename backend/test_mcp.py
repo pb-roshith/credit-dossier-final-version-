@@ -1,9 +1,11 @@
 import asyncio
+import os
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 
 async def run():
-    async with sse_client('https://companydocmcpserver-production.up.railway.app/sse') as (r, w):
+    mcp_url = os.getenv("MCP_SSE_URL", "http://127.0.0.1:8001/sse")
+    async with sse_client(mcp_url) as (r, w):
         async with ClientSession(r, w) as s:
             await s.initialize()
             res = await s.list_tools()

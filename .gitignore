@@ -29,6 +29,8 @@ ENV/
 # ─── Uploads (user-generated content) ───────────────────────────
 backend/uploads/*
 !backend/uploads/.gitkeep
+mcp/generated/*
+!mcp/generated/.gitkeep
 
 # ─── Node / Frontend ────────────────────────────────────────────
 node_modules/

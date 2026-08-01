@@ -4,12 +4,12 @@ Narrative Service — orchestrates section narrative generation via Mistral Agen
 Pipeline per section:
     1. Moderation gate (user-provided inputs)
     2. Orchestration pre-flight (MCP summaries → document selection strategy)
-    3. Deal context optimization (section-specific fields only)
-    4. Generation via section agent (with orchestration strategy + library RAG)
+    3. Deal context + relevant PostgreSQL table selection
+    4. Generation via section agent (structured tables + PDF library RAG)
     5. Accuracy evaluation
 
 - Single section: full pipeline for one section
-- Draft all: MCP summaries fetched ONCE, then 16 sections in parallel with dual semaphores
+- Draft all: PDF summaries and tables fetched ONCE, then reused across 16 sections
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session, joinedload
@@ -26,12 +27,117 @@ from app.config import settings
 from app.models.deal import Deal, Section, AuditEntry
 from app.models.library_file import LibraryFile
 from app.services.mistral_library_service import MistralLibraryService
+from app.services.narrative_version_service import NarrativeVersionService
 from app.services.moderation_service import ModerationService
 from app.services.orchestration_service import OrchestrationService, OrchestrationResult
 from app.services.mcp_service import MCPClientService
 from app.telemetry import get_tracer, set_span_attributes
 
 logger = logging.getLogger(__name__)
+
+
+SECTION_TABLE_SUFFIXES: dict[str, tuple[str, ...]] = {
+    "executive_summary": (
+        "section2_customer_information",
+        "section3_customer_financial_information_historical",
+        "section3a_customer_facilities",
+        "section3b_credit_committee_resolution",
+    ),
+    "client_overview": (
+        "section2_customer_information",
+        "section2_ownership_structure",
+    ),
+    "relationship_summary": (
+        "credit_bank_statements",
+        "section3a_customer_facilities",
+        "section3a_other_financial_institution_exposure",
+    ),
+    "industry_analysis": ("section2_customer_information",),
+    "financial_analysis": (
+        "credit_income_statement",
+        "credit_balance_sheet",
+        "section3_customer_financial_information_historical",
+    ),
+    "ratio_analysis": (
+        "credit_income_statement",
+        "credit_balance_sheet",
+        "credit_cashflow_statement",
+        "section3_customer_financial_information_historical",
+    ),
+    "cash_flow_analysis": (
+        "credit_cashflow_statement",
+        "credit_bank_statements",
+        "credit_projected_financials",
+    ),
+    "qualitative_assessment": (
+        "section2_customer_information",
+        "section2_ownership_structure",
+        "section3b_documentation_security_exceptions",
+    ),
+    "credit_risk_assessment": (
+        "section3_customer_financial_information_historical",
+        "section3a_other_financial_institution_exposure",
+        "section3b_documentation_security_exceptions",
+        "section3b_covenant_description",
+    ),
+    "facility_structure": (
+        "section3a_customer_facilities",
+        "section3a_other_financial_institution_exposure",
+    ),
+    "policy_mapping": (
+        "section3b_documentation_security_exceptions",
+        "section3b_covenant_description",
+        "section3b_credit_committee_resolution",
+    ),
+    "collateral_and_security": (
+        "credit_net_worth_statement",
+        "section3a_collateral_guarantee_information",
+    ),
+    "covenants_and_conditions": (
+        "section3b_covenant_description",
+        "section3b_documentation_security_exceptions",
+    ),
+    "esg_analysis": ("section2_customer_information",),
+    "key_risks_and_mitigants": (
+        "section3_customer_financial_information_historical",
+        "section3a_collateral_guarantee_information",
+        "section3b_documentation_security_exceptions",
+        "section3b_covenant_description",
+    ),
+    "appendix": (),
+}
+
+
+def structured_context_for_section(
+    structured_data: dict[str, object],
+    section_key: str,
+) -> str:
+    """Select and size the PostgreSQL tables relevant to one section."""
+    all_tables = structured_data.get("tables")
+    if not isinstance(all_tables, dict) or not all_tables:
+        return ""
+    suffixes = SECTION_TABLE_SUFFIXES.get(section_key)
+    if suffixes is None:
+        return ""
+    selected = {
+        name: rows
+        for name, rows in all_tables.items()
+        if not suffixes or any(name.endswith(suffix) for suffix in suffixes)
+    }
+    if not selected:
+        return ""
+    rendered = json.dumps(
+        {
+            "company": structured_data.get("company"),
+            "tables": selected,
+        },
+        default=str,
+        indent=2,
+    )
+    max_chars = min(settings.MAX_GROUNDING_CHARS // 2, 60_000)
+    if len(rendered) > max_chars:
+        rendered = rendered[:max_chars] + "\n[Structured data truncated]"
+    return rendered
 
 
 class NarrativeService:
@@ -125,8 +231,19 @@ class NarrativeService:
         deal_context = OrchestrationService.build_deal_context_for_section(
             deal, section.section_key
         )
+        structured_data = await MCPClientService.get_structured_data_cached(
+            deal.customer
+        )
+        structured_context = structured_context_for_section(
+            structured_data,
+            section.section_key,
+        )
 
         # ── Step 4: Generate via Mistral Agent ───────────────────
+        await MistralLibraryService.sync_agents_to_libraries(
+            db,
+            MistralLibraryService.library_ids_for_deal(deal),
+        )
         agent_id = MistralLibraryService.get_global_agent_id(db, section.section_key)
         if not agent_id:
             raise ValueError(f"Global agent for {section.section_key} not initialized")
@@ -138,21 +255,30 @@ class NarrativeService:
             section_description=section.description,
             expected_output=section.expected_output,
             deal_context=deal_context,
+            structured_data=structured_context,
             orchestration_strategy=orchestration.to_strategy_text(),
             custom_instructions=section.custom_instructions,
             output_template=section.output_template,
         )
         gen_ms = (time.time() - gen_start) * 1000
 
-        # Update section
+        # Preserve the current draft before regeneration, then save the new one.
+        NarrativeVersionService.ensure_current(db, section)
         section.generated_content = content
         section.original_generated_content = content
         section.state = "ready"
         section.orchestration_strategy = orchestration.to_strategy_text()
+        NarrativeVersionService.create(
+            db,
+            section,
+            content,
+            "generated",
+            f"Mistral Agent: {section.section_key}",
+        )
 
         # ── Step 5: Accuracy Evaluation ──────────────────────────
         acc_start = time.time()
-        has_docs = len(deal.library_files) > 0
+        has_docs = bool(MistralLibraryService.library_ids_for_deal(deal))
         accuracy = await MistralLibraryService.evaluate_accuracy(
             generated_content=content,
             section_title=section.title,
@@ -171,7 +297,7 @@ class NarrativeService:
         total_ms = (time.time() - total_start) * 1000
         mode = "few-shot" if section.custom_instructions else "zero-shot"
         has_template = " with template" if section.output_template else ""
-        doc_count = len(deal.library_files)
+        doc_count = deal.company_document_count + len(deal.library_files)
         accuracy_tag = f", accuracy={accuracy['score']}%" if accuracy else ""
 
         timing_tag = ""
@@ -222,7 +348,11 @@ class NarrativeService:
     # ── Draft All (Parallel) ───────────────────────────────────────
 
     @staticmethod
-    async def draft_all(db: Session, deal_id: str) -> list[dict]:
+    async def draft_all(
+        db: Session,
+        deal_id: str,
+        progress_callback: Callable[[str, str, str, str], None] | None = None,
+    ) -> list[dict]:
         """
         Generate narratives for ALL sections in parallel.
 
@@ -243,7 +373,11 @@ class NarrativeService:
         if not deal:
             return []
 
-        has_docs = len(deal.library_files) > 0
+        await MistralLibraryService.sync_agents_to_libraries(
+            db,
+            MistralLibraryService.library_ids_for_deal(deal),
+        )
+        has_docs = bool(MistralLibraryService.library_ids_for_deal(deal))
         batch_start = time.time()
         tracer = get_tracer()
 
@@ -278,6 +412,24 @@ class NarrativeService:
                 logger.warning(f"MCP summary fetch failed: {e}")
                 mcp_summaries = ""
 
+        # Fetch all PostgreSQL tables once; each section receives a relevant subset.
+        structured_data: dict[str, object] = {}
+        if deal.customer:
+            try:
+                structured_data = (
+                    await MCPClientService.get_structured_data_cached(
+                        deal.customer
+                    )
+                )
+                logger.info(
+                    "Fetched %s structured tables (%s rows) for '%s'",
+                    structured_data.get("table_count", 0),
+                    structured_data.get("row_count", 0),
+                    deal.customer,
+                )
+            except Exception as e:
+                logger.warning("Structured table fetch failed: %s", e)
+
         # ── Get orchestration agent ID ───────────────────────────
         orch_agent_id = MistralLibraryService.get_global_agent_id(db, "orchestration")
 
@@ -291,9 +443,14 @@ class NarrativeService:
             section_start = time.time()
             orch_ms = gen_ms = acc_ms = 0.0
 
+            def report(status: str, stage: str) -> None:
+                if progress_callback:
+                    progress_callback(section.id, section.title, status, stage)
+
             try:
                 # ── Moderation Gate ──
                 if section.custom_instructions or section.output_template:
+                    report("running", "Checking content moderation")
                     moderation = await ModerationService.moderate_section_inputs(
                         custom_instructions=section.custom_instructions,
                         output_template=section.output_template,
@@ -307,7 +464,9 @@ class NarrativeService:
 
                 # ── Orchestration (lightweight, semaphore=5) ──
                 t0 = time.time()
+                report("waiting", "Waiting for orchestration")
                 async with orch_semaphore:
+                    report("running", "Selecting source documents")
                     orchestration = await OrchestrationService.select_documents_for_section(
                         deal=deal,
                         section=section,
@@ -320,6 +479,10 @@ class NarrativeService:
                 deal_context = OrchestrationService.build_deal_context_for_section(
                     deal, section.section_key
                 )
+                structured_context = structured_context_for_section(
+                    structured_data,
+                    section.section_key,
+                )
 
                 # ── Generation (heavy, semaphore=3) ──
                 agent_id = MistralLibraryService.get_global_agent_id(
@@ -329,13 +492,16 @@ class NarrativeService:
                     raise ValueError(f"No global agent found for {section.section_key}")
 
                 t0 = time.time()
+                report("waiting", "Waiting for narrative agent")
                 async with gen_semaphore:
+                    report("running", "Generating narrative")
                     content = await MistralLibraryService.generate_with_agent(
                         agent_id=agent_id,
                         section_title=section.title,
                         section_description=section.description,
                         expected_output=section.expected_output,
                         deal_context=deal_context,
+                        structured_data=structured_context,
                         orchestration_strategy=orchestration.to_strategy_text(),
                         custom_instructions=section.custom_instructions,
                         output_template=section.output_template,
@@ -345,7 +511,9 @@ class NarrativeService:
                 # ── Accuracy Evaluation (lightweight, semaphore=5) ──
                 accuracy = None
                 t0 = time.time()
+                report("waiting", "Waiting for accuracy review")
                 async with eval_semaphore:
+                    report("running", "Evaluating accuracy")
                     accuracy = await MistralLibraryService.evaluate_accuracy(
                         generated_content=content,
                         section_title=section.title,
@@ -359,6 +527,7 @@ class NarrativeService:
                     f"orch={orch_ms:.0f}ms gen={gen_ms:.0f}ms "
                     f"acc={acc_ms:.0f}ms total={total_ms:.0f}ms"
                 )
+                report("completed", "Completed")
 
                 return {
                     "section_id": section.id,
@@ -379,6 +548,7 @@ class NarrativeService:
                 }
             except Exception as e:
                 logger.error(f"Failed to draft section {section.section_key}: {e}")
+                report("failed", str(e))
                 return {
                     "section_id": section.id,
                     "section_key": section.section_key,
@@ -402,10 +572,18 @@ class NarrativeService:
                 (s for s in deal.sections if s.id == result["section_id"]), None
             )
             if section:
+                NarrativeVersionService.ensure_current(db, section)
                 section.generated_content = result["generated_content"]
                 section.original_generated_content = result["generated_content"]
                 if result["success"]:
                     section.state = "ready"
+                    NarrativeVersionService.create(
+                        db,
+                        section,
+                        result["generated_content"],
+                        "generated",
+                        f"Mistral Agent: {section.section_key}",
+                    )
                 accuracy = result.get("accuracy")
                 if accuracy:
                     section.accuracy_score = accuracy["score"]

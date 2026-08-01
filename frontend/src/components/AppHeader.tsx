@@ -1,10 +1,11 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { BookOpen, LayoutDashboard, FilePlus2 } from "lucide-react";
+import { BookOpen, Factory, LayoutDashboard, FilePlus2 } from "lucide-react";
 
 export function AppHeader() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const isDashboard = pathname === "/" || pathname === "/dashboard";
   const isNew = pathname.startsWith("/deals/new");
+  const isManufacture = pathname.startsWith("/manufacture-data");
 
   const tabCls = (active: boolean) =>
     `flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium ${
@@ -24,6 +25,9 @@ export function AppHeader() {
           </Link>
           <Link to="/deals/new" className={tabCls(isNew)}>
             <FilePlus2 className="h-4 w-4" /> New Deal
+          </Link>
+          <Link to="/manufacture-data" className={tabCls(isManufacture)}>
+            <Factory className="h-4 w-4" /> Manufacture Data
           </Link>
         </div>
         <div className="flex items-center gap-3">

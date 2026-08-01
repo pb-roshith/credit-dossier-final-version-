@@ -1,8 +1,11 @@
+"""Direct company-library linking for deal narrative generation.
+
+Company documents remain in their existing Mistral Library. This service stores
+only their references and never downloads or uploads duplicate document bytes.
+"""
+
 import logging
-import httpx
-import asyncio
 from datetime import datetime, timezone
-from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models.deal import Deal
@@ -11,177 +14,140 @@ from app.services.deal_service import DealService
 from app.services.mcp_service import MCPClientService
 from app.services.mistral_library_service import MistralLibraryService
 
+
 logger = logging.getLogger(__name__)
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
-class LibrarySyncService:
 
+def _library_id_from_url(url: str | None) -> str | None:
+    if not url or not url.startswith("mistral://"):
+        return None
+    reference = url.removeprefix("mistral://").strip("/")
+    library_id, _, _document_id = reference.partition("/")
+    return library_id or None
+
+
+class LibrarySyncService:
     @staticmethod
-    async def sync_mcp_documents(deal_id: str):
-        """
-        Background task to sync MCP documents for a deal into the Mistral Library.
-        Tracks progress via LibrarySyncLog.
-        """
+    async def sync_mcp_documents(deal_id: str) -> None:
+        """Refresh direct MCP/Mistral references without copying documents."""
         db = SessionLocal()
         try:
             deal = DealService.get_deal(db, deal_id)
             if not deal:
-                logger.error(f"Sync failed: Deal {deal_id} not found")
+                logger.error("Company-library link failed: deal %s not found", deal_id)
+                return
+            if deal.library_sync_status == "syncing":
+                logger.info("Company-library refresh already running for %s", deal_id)
                 return
 
             deal.library_sync_status = "syncing"
             db.commit()
 
-            logger.info(f"Starting MCP document sync for {deal.customer}")
+            details = await MCPClientService.get_company_details(deal.customer)
+            documents = await MCPClientService.get_documents(deal.customer)
+            company_library_id = details.get("mistral_library_id")
+            if not company_library_id:
+                company_library_id = next(
+                    (
+                        _library_id_from_url(
+                            document.get("document_url") or document.get("url")
+                        )
+                        for document in documents
+                        if _library_id_from_url(
+                            document.get("document_url") or document.get("url")
+                        )
+                    ),
+                    None,
+                )
 
-            # 1. Fetch available docs from MCP
-            docs = await MCPClientService.get_documents(deal.customer)
-            if not docs:
-                logger.info(f"No MCP docs found for {deal.customer}")
+            if not company_library_id:
+                deal.company_mistral_library_id = None
+                deal.company_document_count = 0
                 deal.library_sync_status = "ready"
                 db.commit()
+                logger.info("No company Mistral Library found for %s", deal.customer)
                 return
 
-            # 2. Compare against existing library files and queued logs
-            existing_filenames = {f.filename for f in deal.library_files}
-            existing_logs = {log.doc_title for log in deal.sync_logs if log.status not in ["failed", "skipped"]}
-            
-            new_docs_to_sync = []
-            for doc in docs:
-                url = doc.get("document_url") or doc.get("url")
-                filename = doc.get("document_name") or doc.get("filename") or doc.get("name") or "document.pdf"
-                
-                if not url:
-                    continue
-                if filename in existing_filenames or filename in existing_logs:
-                    continue
-                
-                new_docs_to_sync.append({"url": url, "filename": filename})
+            deal.company_mistral_library_id = company_library_id
+            deal.company_document_count = len(documents)
 
-            if not new_docs_to_sync:
-                logger.info(f"No new docs to sync for {deal.customer}")
-                # check if there are running syncs, otherwise ready
-                running = [log for log in deal.sync_logs if log.status in ["queued", "downloading", "uploading"]]
-                if not running:
-                    deal.library_sync_status = "ready"
-                db.commit()
-                return
-
-            # 3. Queue the new docs
-            logs = []
-            for doc in new_docs_to_sync:
-                log = LibrarySyncLog(
-                    deal_id=deal.id,
-                    doc_title=doc["filename"],
-                    doc_url=doc["url"],
-                    status="queued"
+            latest_logs = {
+                log.doc_title: log
+                for log in sorted(deal.sync_logs, key=lambda item: item.created_at)
+            }
+            seen_titles: set[str] = set()
+            for document in documents:
+                title = (
+                    document.get("document_name")
+                    or document.get("filename")
+                    or document.get("name")
+                    or "document.pdf"
                 )
-                db.add(log)
-                logs.append(log)
+                url = document.get("document_url") or document.get("url")
+                seen_titles.add(title)
+                log = latest_logs.get(title)
+                if not log:
+                    log = LibrarySyncLog(
+                        deal_id=deal.id,
+                        doc_title=title,
+                        created_at=_now(),
+                    )
+                    db.add(log)
+                log.doc_url = url
+                log.status = "linked"
+                log.error = None
+                log.started_at = None
+                log.completed_at = _now()
+
+            # Keep historical rows, but mark references no longer returned by MCP.
+            for title, log in latest_logs.items():
+                if log.status == "linked" and title not in seen_titles:
+                    log.status = "removed"
+                    log.completed_at = _now()
+
+            deal.library_sync_status = "ready"
             db.commit()
 
-            # 4. Process downloads and uploads
-            has_errors = False
-            async with httpx.AsyncClient() as client:
-                for log in logs:
-                    try:
-                        # Downloading
-                        log.status = "downloading"
-                        log.started_at = _now()
-                        db.commit()
-                        
-                        resp = await client.get(log.doc_url, timeout=60.0)
-                        resp.raise_for_status()
-                        file_bytes = resp.content
-                        log.file_size = len(file_bytes)
-
-                        # Uploading
-                        log.status = "uploading"
-                        db.commit()
-
-                        # Re-fetch deal to prevent detached instance issues during upload
-                        deal = DealService.get_deal(db, deal_id)
-                        
-                        await MistralLibraryService.upload_file_to_library(
-                            db=db,
-                            deal=deal,
-                            file_bytes=file_bytes,
-                            filename=log.doc_title,
-                            source_type="mcp_auto",
-                            note="Auto-uploaded from MCP Server"
-                        )
-
-                        # Completed
-                        log.status = "completed"
-                        log.completed_at = _now()
-                        db.commit()
-                        
-                        # Wait a bit between uploads to respect rate limits
-                        await asyncio.sleep(1.5)
-
-                    except Exception as e:
-                        logger.error(f"Failed to sync {log.doc_url}: {e}")
-                        log.status = "failed"
-                        log.error = str(e)
-                        log.completed_at = _now()
-                        has_errors = True
-                        db.commit()
-
-            # 5. Finalize status
-            deal = DealService.get_deal(db, deal_id)
-            running_logs = [log for log in deal.sync_logs if log.status in ["queued", "downloading", "uploading"]]
-            if not running_logs:
-                deal.library_sync_status = "partial" if has_errors else "ready"
-                db.commit()
-
-        except Exception as e:
-            logger.error(f"Library sync error for deal {deal_id}: {e}")
+            await MistralLibraryService.remove_legacy_mcp_copies(db, deal)
+            await MistralLibraryService.sync_agents_to_libraries(
+                db,
+                MistralLibraryService.library_ids_for_deal(deal),
+            )
+            logger.info(
+                "Linked %s company documents from Mistral Library %s to deal %s",
+                len(documents),
+                company_library_id,
+                deal.id,
+            )
+        except Exception as exc:
+            logger.error("Company-library link error for %s: %s", deal_id, exc)
             try:
                 deal = db.query(Deal).filter(Deal.id == deal_id).first()
                 if deal:
                     deal.library_sync_status = "error"
                     db.commit()
-            except:
-                pass
+            except Exception:
+                db.rollback()
         finally:
             db.close()
 
     @staticmethod
     async def check_for_new_documents(deal_id: str) -> dict:
-        """
-        Called when deal is opened to check if new documents exist on MCP.
-        If yes, auto-triggers sync in the background (does not await the full sync).
-        """
+        """Refresh direct links and return the current company-document count."""
+        await LibrarySyncService.sync_mcp_documents(deal_id)
         db = SessionLocal()
         try:
-            deal = DealService.get_deal(db, deal_id)
-            if not deal:
-                return {"new_count": 0, "total_mcp": 0, "already_synced": 0}
-            
-            docs = await MCPClientService.get_documents(deal.customer)
-            if not docs:
-                return {"new_count": 0, "total_mcp": 0, "already_synced": 0}
-                
-            existing_filenames = {f.filename for f in deal.library_files}
-            existing_logs = {log.doc_title for log in deal.sync_logs if log.status not in ["failed", "skipped"]}
-            
-            new_count = 0
-            for doc in docs:
-                url = doc.get("document_url") or doc.get("url")
-                filename = doc.get("document_name") or doc.get("filename") or doc.get("name") or "document.pdf"
-                if url and filename not in existing_filenames and filename not in existing_logs:
-                    new_count += 1
-
-            if new_count > 0:
-                # Since this is already running in a background task, we can just await it
-                await LibrarySyncService.sync_mcp_documents(deal_id)
-
+            deal = db.query(Deal).filter(Deal.id == deal_id).first()
+            total = deal.company_document_count if deal else 0
             return {
-                "new_count": new_count,
-                "total_mcp": len(docs),
-                "already_synced": len(docs) - new_count
+                "new_count": 0,
+                "total_mcp": total,
+                "already_synced": total,
+                "mode": "direct_library_reference",
             }
         finally:
             db.close()

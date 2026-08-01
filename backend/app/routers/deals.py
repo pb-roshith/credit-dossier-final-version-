@@ -72,9 +72,7 @@ def get_deal(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depe
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
         
-    # Sync global agents to this deal's library in the background
-    background_tasks.add_task(MistralLibraryService.sync_agents_to_library, db, deal.mistral_library_id)
-    # Check for new MCP docs in background and auto-sync if found
+    # Refresh the direct company-library link in the background.
     background_tasks.add_task(LibrarySyncService.check_for_new_documents, deal.id)
         
     return deal
@@ -82,13 +80,13 @@ def get_deal(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depe
 
 @router.post("/{deal_id}/library/sync", status_code=202)
 def sync_mcp_documents(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """Manually trigger a sync of MCP documents for this deal."""
+    """Refresh direct references to the company's Mistral Library."""
     deal = DealService.get_deal(db, deal_id)
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
     
     background_tasks.add_task(LibrarySyncService.sync_mcp_documents, deal.id)
-    return {"message": "Library sync started", "status": "syncing"}
+    return {"message": "Company library refresh started", "status": "syncing"}
 
 @router.get("/{deal_id}/library/sync-status")
 def get_library_sync_status(deal_id: str, db: Session = Depends(get_db)):
@@ -123,7 +121,6 @@ def create_deal(data: DealCreate, background_tasks: BackgroundTasks, db: Session
     """Create a new deal with 16 default sections."""
     deal = DealService.create_deal(db, data.model_dump())
     
-    background_tasks.add_task(MistralLibraryService.sync_agents_to_library, db, deal.mistral_library_id)
     background_tasks.add_task(LibrarySyncService.sync_mcp_documents, deal.id)
     
     # Re-fetch with full relations

@@ -64,6 +64,27 @@ def _clean_unprintable_chars(text: str) -> str:
     clean_text = re.sub(r'[^\x00-\x7F\xA0-\xFF\u0100-\u017F\u2013-\u2014\u2018-\u201D\u20AC\u00A3]', '', text)
     return clean_text
 
+
+def _section_narrative(section: Section) -> str:
+    """Return final narrative text with UI-only source markers removed."""
+    content = section.final_generated_content or section.generated_content or ""
+    # Current inline citation format.
+    content = re.sub(
+        r"\s*\[Source\s*:\s*[^\]\r\n]+\]",
+        "",
+        content,
+        flags=re.IGNORECASE,
+    )
+    # Remove legacy numbered reference sections and their inline markers.
+    content = re.sub(
+        r"\n{0,2}#{1,6}\s*(?:References|Sources|Bibliography)\b.*\Z",
+        "",
+        content,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    content = re.sub(r"\[(?:\d{1,2})(?:\s*,\s*\d{1,2})*\]", "", content)
+    return content.strip()
+
 def _markdown_to_html_with_graphs(text: str, theme_palette: list[str]) -> str:
     """Detects numeric markdown tables, injects matplotlib charts, and converts to HTML."""
     table_pattern = re.compile(r'(^[ \t]*\|[^\n]+\|[ \t]*\n[ \t]*\|[-:| ]+\|[ \t]*\n(?:[ \t]*\|[^\n]+\|[ \t]*(?:\n|$))+)', re.MULTILINE)
@@ -167,7 +188,7 @@ class ExportService:
         # Filter generated sections
         valid_sections = [
             s for s in sorted(deal.sections, key=lambda x: x.order_index) 
-            if s.state == "ready" and s.generated_content and s.generated_content.strip()
+            if s.state == "ready" and _section_narrative(s).strip()
         ]
 
         # Use the deal's dynamic theme colors, handling None or empty strings
@@ -233,7 +254,7 @@ class ExportService:
         # Sections
         for i, section in enumerate(valid_sections, 1):
             html_parts.append(f"<h2 style='color: {p_color}; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;'>{i}. {section.title}</h2>")
-            clean_content = _clean_unprintable_chars(section.generated_content)
+            clean_content = _clean_unprintable_chars(_section_narrative(section))
             content_html = _markdown_to_html_with_graphs(clean_content, theme_palette)
             html_parts.append(content_html)
             if i < len(valid_sections):
@@ -350,7 +371,7 @@ class ExportService:
 
         valid_sections = [
             s for s in sorted(deal.sections, key=lambda x: x.order_index) 
-            if s.state == "ready" and s.generated_content and s.generated_content.strip()
+            if s.state == "ready" and _section_narrative(s).strip()
         ]
 
         client = _get_client()
@@ -376,7 +397,7 @@ class ExportService:
 
         async def process_section(section):
             async with sem:
-                content = section.generated_content
+                content = _section_narrative(section)
                 charts = []
                 native_tables = []
                 
@@ -441,7 +462,7 @@ class ExportService:
                             model=settings.MISTRAL_MODEL,
                             messages=[
                                 {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": f"Section: {sec.title}\n\nContent:\n{sec.generated_content}"}
+                                {"role": "user", "content": f"Section: {sec.title}\n\nContent:\n{_section_narrative(sec)}"}
                             ],
                             temperature=0.2,
                             response_format={"type": "json_object"}

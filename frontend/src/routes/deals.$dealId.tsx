@@ -4,9 +4,18 @@ import {
   ArrowLeft, FileText, Clock, Download, Sparkles, RefreshCw, Plus, TriangleAlert,
   Loader2, CheckCircle2, Upload, X, FileDown, BookOpenCheck, Trash2, FileType, Save,
   File as FileIcon, Link as LinkIcon, Type, Eye, EyeOff, BarChart3, Table as TableIcon,
-  ShieldCheck, ShieldAlert, AlertTriangle, ChevronDown, ChevronUp, Info, Library
+  ShieldCheck, ShieldAlert, AlertTriangle, ChevronDown, ChevronUp, Info, Library,
+  History,
 } from "lucide-react";
-import { api, formatAmount, type Deal, type Section, type DealDocument } from "@/lib/deals";
+import {
+  api,
+  formatAmount,
+  type Deal,
+  type DealDocument,
+  type DraftAllJob,
+  type NarrativeVersion,
+  type Section,
+} from "@/lib/deals";
 import { diffWords } from "diff";
 
 
@@ -242,6 +251,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const [outputTemplate, setOutputTemplate] = useState(active?.output_template || "");
   const [generating, setGenerating] = useState(false);
   const [draftingAll, setDraftingAll] = useState(false);
+  const [draftAllJob, setDraftAllJob] = useState<DraftAllJob | null>(null);
   const [savingTemplate, setSavingTemplate] = useState(false);
   const [uploadingTemplate, setUploadingTemplate] = useState(false);
   const [savingInstructions, setSavingInstructions] = useState(false);
@@ -252,6 +262,12 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const [selectedSectionIds, setSelectedSectionIds] = useState<Set<string>>(new Set());
   const [draftingSelected, setDraftingSelected] = useState(false);
   const [showEdits, setShowEdits] = useState(false);
+  const [showVersionHistory, setShowVersionHistory] = useState(false);
+  const [narrativeVersions, setNarrativeVersions] = useState<NarrativeVersion[]>([]);
+  const [loadingVersions, setLoadingVersions] = useState(false);
+  const [markingFinalVersionId, setMarkingFinalVersionId] = useState<string | null>(null);
+  const [deletingNarrativeVersionId, setDeletingNarrativeVersionId] = useState<string | null>(null);
+  const [expandedVersionIds, setExpandedVersionIds] = useState<Set<string>>(new Set());
 
   // Moderation state
   const [moderationError, setModerationError] = useState<string | null>(null);
@@ -269,6 +285,99 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
     }
   }, [activeId, active]);
 
+  useEffect(() => {
+    setShowVersionHistory(false);
+    setNarrativeVersions([]);
+    setExpandedVersionIds(new Set());
+  }, [activeId]);
+
+  useEffect(() => {
+    if (
+      !draftAllJob ||
+      !["queued", "running"].includes(draftAllJob.status)
+    ) {
+      return;
+    }
+    const poll = async () => {
+      try {
+        const latest = await api.sections.generateAllStatus(
+          deal.id,
+          draftAllJob.job_id,
+        );
+        setDraftAllJob(latest);
+        if (["completed", "failed"].includes(latest.status)) {
+          setDraftingAll(false);
+          refresh();
+        }
+      } catch (err) {
+        console.error("Reading Draft All progress failed:", err);
+      }
+    };
+    const timer = window.setInterval(poll, 1000);
+    void poll();
+    return () => window.clearInterval(timer);
+  }, [deal.id, draftAllJob?.job_id, draftAllJob?.status]);
+
+  const loadNarrativeVersions = async () => {
+    if (!active) return;
+    setLoadingVersions(true);
+    try {
+      setNarrativeVersions(
+        await api.sections.versions(deal.id, active.id),
+      );
+    } catch (err) {
+      console.error("Loading narrative versions failed:", err);
+    } finally {
+      setLoadingVersions(false);
+    }
+  };
+
+  const handleToggleVersionHistory = async () => {
+    const nextOpen = !showVersionHistory;
+    setShowVersionHistory(nextOpen);
+    if (nextOpen) {
+      await loadNarrativeVersions();
+    }
+  };
+
+  const handleMarkNarrativeVersionFinal = async (versionId: string) => {
+    if (!active || markingFinalVersionId) return;
+    setMarkingFinalVersionId(versionId);
+    try {
+      await api.sections.markVersionFinal(deal.id, active.id, versionId);
+      await loadNarrativeVersions();
+      refresh();
+      setEditingContent(false);
+      setShowEdits(false);
+    } catch (err) {
+      console.error("Marking narrative version final failed:", err);
+    } finally {
+      setMarkingFinalVersionId(null);
+    }
+  };
+
+  const handleDeleteNarrativeVersion = async (version: NarrativeVersion) => {
+    if (!active || deletingNarrativeVersionId) return;
+    const confirmed = window.confirm(
+      version.is_final
+        ? "Delete this final version? The newest remaining version will become the default final."
+        : "Delete this narrative version? This cannot be undone.",
+    );
+    if (!confirmed) return;
+    setDeletingNarrativeVersionId(version.id);
+    try {
+      await api.sections.deleteVersion(deal.id, active.id, version.id);
+      await loadNarrativeVersions();
+      refresh();
+      setEditingContent(false);
+      setShowEdits(false);
+    } catch (err) {
+      console.error("Deleting narrative version failed:", err);
+    } finally {
+      setDeletingNarrativeVersionId(null);
+    }
+  };
+
   const handleGenerate = async () => {
     if (!active || generating) return;
     setModerationError(null);
@@ -276,6 +385,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
     try {
       await api.sections.generate(deal.id, active.id, customInstructions || undefined);
       refresh();
+      if (showVersionHistory) await loadNarrativeVersions();
     } catch (err: any) {
       const msg = err?.message || "";
       if (msg.includes("moderation") || msg.includes("flagged") || msg.includes("Flagged")) {
@@ -293,12 +403,12 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const handleDraftAll = async () => {
     if (draftingAll || draftingSelected) return;
     setDraftingAll(true);
+    setDraftAllJob(null);
     try {
-      await api.sections.generateAll(deal.id);
-      refresh();
+      const job = await api.sections.startGenerateAll(deal.id);
+      setDraftAllJob(job);
     } catch (err) {
       console.error("Draft all failed:", err);
-    } finally {
       setDraftingAll(false);
     }
   };
@@ -385,6 +495,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
     try {
       await api.sections.update(deal.id, active.id, { generated_content: editedContent });
       refresh();
+      if (showVersionHistory) await loadNarrativeVersions();
       setEditingContent(false);
       setShowEdits(true);
     } catch (err) {
@@ -406,6 +517,14 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const isModerationSafe = active.moderation_status === "safe";
   const flaggedCategories = active.moderation_details?.flagged_categories || [];
   const isSyncing = deal.library_sync_status === "syncing";
+  const liveDraftSections = draftAllJob?.sections.filter(
+    section => section.status === "running",
+  ) || [];
+  const draftProgressPercent = draftAllJob
+    ? draftAllJob.percent
+    : totalSections > 0
+      ? Math.round((readySections / totalSections) * 100)
+      : 0;
 
   return (
     <div className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
@@ -429,18 +548,71 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
           <div className="p-3">
             <div className="flex items-center justify-between mb-2">
               <div className="text-xs font-medium text-muted-foreground">
-                Progress: {readySections}/{totalSections} sections
+                {draftAllJob
+                  ? `Draft All: ${draftAllJob.completed}/${draftAllJob.total} completed${draftAllJob.failed ? `, ${draftAllJob.failed} failed` : ""}`
+                  : `Progress: ${readySections}/${totalSections} sections`}
               </div>
               <div className="text-xs font-mono text-muted-foreground">
-                {totalSections > 0 ? Math.round((readySections / totalSections) * 100) : 0}%
+                {draftProgressPercent}%
               </div>
             </div>
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted mb-3">
               <div
                 className="h-full rounded-full bg-emerald-500 transition-all duration-500"
-                style={{ width: `${totalSections > 0 ? (readySections / totalSections) * 100 : 0}%` }}
+                style={{ width: `${draftProgressPercent}%` }}
               />
             </div>
+            {draftAllJob && (
+              <div className="mb-3 space-y-2 rounded-md border bg-muted/20 p-2.5">
+                {liveDraftSections.length > 0 ? (
+                  <div className="rounded-md border border-blue-200 bg-blue-50 px-2.5 py-2 text-xs text-blue-800">
+                    <div className="mb-1 font-semibold">Currently running</div>
+                    {liveDraftSections.map(section => (
+                      <div key={section.section_id} className="flex items-center gap-2 py-0.5">
+                        <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                        <span className="font-medium">{section.title}</span>
+                        <span className="text-blue-600">— {section.stage}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : draftingAll ? (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    Preparing the next sections…
+                  </div>
+                ) : null}
+                <div className="max-h-48 space-y-1 overflow-y-auto">
+                  {draftAllJob.sections.map(section => (
+                    <div
+                      key={section.section_id}
+                      className="flex items-center justify-between gap-2 rounded bg-background px-2 py-1.5 text-[11px]"
+                    >
+                      <span className="truncate font-medium">{section.title}</span>
+                      <span className={`flex shrink-0 items-center gap-1 ${
+                        section.status === "completed"
+                          ? "text-emerald-600"
+                          : section.status === "failed"
+                            ? "text-red-600"
+                            : section.status === "running"
+                              ? "text-blue-600"
+                              : "text-muted-foreground"
+                      }`}>
+                        {section.status === "completed" ? (
+                          <CheckCircle2 className="h-3 w-3" />
+                        ) : section.status === "failed" ? (
+                          <TriangleAlert className="h-3 w-3" />
+                        ) : section.status === "running" ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <Clock className="h-3 w-3" />
+                        )}
+                        {section.stage}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex gap-2 mt-3">
               <button
                 onClick={handleDraftAll}
@@ -448,7 +620,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                 className="flex-1 inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary/10 px-3 text-xs font-medium text-primary hover:bg-primary/20 disabled:opacity-60 transition-colors"
               >
                 {draftingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                Draft All
+                {draftingAll ? "Drafting All…" : "Draft All"}
               </button>
               <button
                 onClick={handleDraftSelected}
@@ -761,6 +933,24 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               )}
               {active.generated_content && !editingContent && (
                 <button
+                  onClick={handleToggleVersionHistory}
+                  disabled={loadingVersions}
+                  className={`inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs font-medium transition-colors ${
+                    showVersionHistory
+                      ? "border-primary-foreground/60 bg-primary-foreground/25"
+                      : "border-primary-foreground/30 bg-primary-foreground/10 hover:bg-primary-foreground/20"
+                  }`}
+                >
+                  {loadingVersions ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <History className="h-3.5 w-3.5" />
+                  )}
+                  Version History
+                </button>
+              )}
+              {active.generated_content && !editingContent && (
+                <button
                   onClick={() => {
                     setEditedContent(active.generated_content || "");
                     setEditingContent(true);
@@ -793,6 +983,151 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               </button>
             </div>
           </div>
+
+          {showVersionHistory && (
+            <div className="border-b bg-slate-50 p-4 text-foreground">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-700">
+                    All Generated and Edited Versions
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    The latest version is used as the default final until you
+                    explicitly mark another version. Only the final version is
+                    used in exports.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowVersionHistory(false)}
+                  className="rounded-md border bg-background p-1.5 text-muted-foreground hover:text-foreground"
+                  title="Close version history"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              {loadingVersions ? (
+                <div className="flex items-center justify-center gap-2 rounded-md border bg-background p-8 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading versions…
+                </div>
+              ) : narrativeVersions.length === 0 ? (
+                <div className="rounded-md border border-dashed bg-background p-8 text-center text-sm text-muted-foreground">
+                  No saved narrative versions yet.
+                </div>
+              ) : (
+                <div className="max-h-[520px] space-y-3 overflow-y-auto pr-1">
+                  {narrativeVersions.map((version, index) => {
+                    const hasExplicitFinal = narrativeVersions.some(
+                      item => item.is_final,
+                    );
+                    const isDefaultFinal = !hasExplicitFinal && index === 0;
+                    const expanded = expandedVersionIds.has(version.id);
+                    const lines = version.content.split("\n");
+                    const shortContent = lines.slice(0, 5).join("\n");
+                    const preview =
+                      expanded || version.content.length <= 650
+                        ? version.content
+                        : `${shortContent.slice(0, 650)}…`;
+                    const canExpand =
+                      version.content.length > 650 || lines.length > 5;
+                    const badgeClass =
+                      version.version_type === "edited"
+                        ? "bg-pink-100 text-pink-700"
+                        : "bg-blue-100 text-blue-700";
+
+                    return (
+                      <div
+                        key={version.id}
+                        className="rounded-lg border bg-background p-3 shadow-sm"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-semibold">
+                              Version {narrativeVersions.length - index}
+                            </span>
+                            <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${badgeClass}`}>
+                              {version.version_type}
+                            </span>
+                            {index === 0 && (
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase text-slate-700">
+                                Latest
+                              </span>
+                            )}
+                            {version.is_final && (
+                              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-700">
+                                Final
+                              </span>
+                            )}
+                            {isDefaultFinal && (
+                              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-700">
+                                Default Final
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-muted-foreground">
+                            {new Date(version.created_at).toLocaleString()}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          {version.created_by}
+                        </p>
+                        <pre className="mt-3 whitespace-pre-wrap rounded-md border bg-muted/30 p-3 font-sans text-xs leading-5 text-slate-700">
+                          {preview}
+                        </pre>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          {canExpand && (
+                            <button
+                              onClick={() =>
+                                setExpandedVersionIds(current => {
+                                  const next = new Set(current);
+                                  if (next.has(version.id)) next.delete(version.id);
+                                  else next.add(version.id);
+                                  return next;
+                                })
+                              }
+                              className="rounded-md border px-2.5 py-1 text-xs font-medium hover:bg-muted"
+                            >
+                              {expanded ? "Show less" : "Show more"}
+                            </button>
+                          )}
+                          <button
+                            onClick={() =>
+                              handleMarkNarrativeVersionFinal(version.id)
+                            }
+                            disabled={version.is_final || markingFinalVersionId !== null}
+                            className="inline-flex items-center gap-1.5 rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {markingFinalVersionId === version.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <CheckCircle2 className="h-3 w-3" />
+                            )}
+                            {version.is_final ? "Marked as Final" : "Mark as Final"}
+                          </button>
+                          <button
+                            onClick={() => handleDeleteNarrativeVersion(version)}
+                            disabled={
+                              deletingNarrativeVersionId !== null ||
+                              markingFinalVersionId !== null
+                            }
+                            className="inline-flex items-center gap-1.5 rounded-md border border-red-300 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {deletingNarrativeVersionId === version.id ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3 w-3" />
+                            )}
+                            Delete Version
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Moderation Warning Banner */}
           {(isFlagged || moderationError) && (
@@ -1872,6 +2207,19 @@ function DocumentsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   };
 
   const libDocCount = deal.library_files?.length || 0;
+  const latestSyncLogs = Array.from(
+    (deal.sync_logs || []).reduce((latestByDocument, log) => {
+      const current = latestByDocument.get(log.doc_title);
+      if (
+        !current ||
+        new Date(log.created_at).getTime() >=
+          new Date(current.created_at).getTime()
+      ) {
+        latestByDocument.set(log.doc_title, log);
+      }
+      return latestByDocument;
+    }, new Map<string, Deal["sync_logs"][number]>()),
+  ).map(([, log]) => log);
   
   // Try to find matching library files for MCP docs to show status
   const getMcpDocStatus = (filename: string) => {
@@ -1885,7 +2233,12 @@ function DocumentsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
         <div className="doc-section-header justify-between">
           <div className="flex items-center gap-2">
             <Library className="h-4 w-4 shrink-0" />
-            <span>MCP Sync Timeline</span>
+            <span>Company Source Library</span>
+            {deal.company_document_count > 0 && (
+              <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                {deal.company_document_count} documents
+              </span>
+            )}
           </div>
           <button
             onClick={handleTriggerSync}
@@ -1893,21 +2246,23 @@ function DocumentsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
             className="inline-flex h-6 items-center gap-1.5 rounded bg-primary/10 px-2 text-[11px] font-medium text-primary hover:bg-primary/20 disabled:opacity-50 transition-colors"
           >
             {(triggeringSync || deal.library_sync_status === "syncing") ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-            {deal.library_sync_status === "syncing" ? "Syncing..." : "Sync Now"}
+            {deal.library_sync_status === "syncing" ? "Refreshing..." : "Refresh"}
           </button>
         </div>
         <div className="p-4">
           <p className="text-sm text-muted-foreground mb-4">
-            Documents automatically fetched from the company database for <strong>{deal.customer}</strong>.
+            Documents for <strong>{deal.customer}</strong> are read directly from the existing Mistral Library. No files are downloaded or uploaded again.
           </p>
 
-          {deal.sync_logs && deal.sync_logs.length > 0 ? (
+          {latestSyncLogs.length > 0 ? (
             <div className="space-y-3">
-              {deal.sync_logs.map((log) => {
+              {latestSyncLogs.map((log) => {
                 let statusConfig = { icon: "⏳", color: "text-slate-500", bg: "bg-slate-100", label: "Queued" };
                 if (log.status === "downloading") statusConfig = { icon: "⬇️", color: "text-blue-600", bg: "bg-blue-50", label: "Downloading from MCP..." };
                 if (log.status === "uploading") statusConfig = { icon: "⬆️", color: "text-indigo-600", bg: "bg-indigo-50", label: "Uploading to Mistral Library..." };
                 if (log.status === "completed") statusConfig = { icon: "✅", color: "text-emerald-600", bg: "bg-emerald-50", label: "Completed" };
+                if (log.status === "linked") statusConfig = { icon: "✅", color: "text-emerald-600", bg: "bg-emerald-50", label: "Referenced directly" };
+                if (log.status === "removed") statusConfig = { icon: "➖", color: "text-slate-500", bg: "bg-slate-50", label: "No longer available" };
                 if (log.status === "failed") statusConfig = { icon: "❌", color: "text-red-600", bg: "bg-red-50", label: "Failed" };
 
                 return (
@@ -1940,8 +2295,8 @@ function DocumentsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
           ) : (
             <div className="text-sm text-muted-foreground bg-muted/30 p-6 rounded-lg text-center border border-dashed">
               <Library className="h-8 w-8 mx-auto mb-2 text-muted-foreground/40" />
-              <div>No sync history for {deal.customer}.</div>
-              <div className="text-[10px] mt-1">Click "Sync Now" to check for documents on the MCP server.</div>
+              <div>No company documents are currently linked for {deal.customer}.</div>
+              <div className="text-[10px] mt-1">Click "Refresh" to check the registered Mistral Library.</div>
             </div>
           )}
         </div>
@@ -1952,7 +2307,7 @@ function DocumentsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
         <div className="doc-section-header justify-between">
           <span className="flex items-center gap-2">
             <Library className="h-4 w-4 shrink-0" />
-            Deal Document Library
+            Deal-Specific Uploads
             {libDocCount > 0 && (
               <span className="rounded-full bg-blue-500/20 text-blue-700 px-2 py-0.5 text-[10px] font-bold">
                 {libDocCount} file{libDocCount !== 1 ? "s" : ""}
@@ -1975,7 +2330,7 @@ function DocumentsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
         <div className="px-4 py-2 bg-blue-50/50 border-b border-blue-100/50 flex items-center gap-2">
           <Info className="h-3.5 w-3.5 text-blue-500 shrink-0" />
           <span className="text-[10px] text-blue-700">
-            All documents here are shared across every section. Each AI agent automatically searches this library for relevant data.
+            Add only documents specific to this deal. AI generation searches these uploads together with the shared company source library.
           </span>
         </div>
 
