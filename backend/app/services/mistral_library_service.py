@@ -97,7 +97,38 @@ def repair_inline_source_markers(content: str) -> str:
         r"[Insufficient data for \1.]",
         content,
     )
+    content = re.sub(
+        r"(\[Source\s*:\s*[^\]\r\n]+\])(?:[ \t]+\1)+",
+        r"\1",
+        content,
+        flags=re.IGNORECASE,
+    )
     return content.strip()
+
+
+def conversation_output_content(response: Any) -> str | None:
+    """Render the final Conversations API message with inline source titles."""
+    message_outputs = [
+        output
+        for output in (getattr(response, "outputs", None) or [])
+        if getattr(output, "type", None) == "message.output"
+    ]
+    if not message_outputs:
+        return None
+    content = message_outputs[-1].content
+    if isinstance(content, str):
+        return content
+
+    parts: list[str] = []
+    for chunk in content:
+        chunk_type = getattr(chunk, "type", None)
+        if chunk_type == "text":
+            parts.append(getattr(chunk, "text", ""))
+        elif chunk_type == "tool_reference":
+            title = str(getattr(chunk, "title", "") or "").strip()
+            if title:
+                parts.append(f" [Source : {title}]")
+    return "".join(parts) or None
 
 
 def _get_client():
@@ -708,18 +739,15 @@ class MistralLibraryService:
                 )
 
             response = await _call_with_retry(
-                lambda: client.agents.complete_async(
+                lambda: client.beta.conversations.start_async(
                     agent_id=agent_id,
-                    messages=messages,
+                    inputs=messages[0]["content"],
+                    store=False,
                 ),
                 description=f"Agent completion for '{section_title}'",
             )
 
-            content = None
-            if getattr(response.choices[0], "message", None):
-                content = response.choices[0].message.content
-            elif getattr(response.choices[0], "messages", None) and len(response.choices[0].messages) > 0:
-                content = response.choices[0].messages[-1].content
+            content = conversation_output_content(response)
 
             if not content:
                 # Retry once with slightly different prompt
@@ -728,16 +756,14 @@ class MistralLibraryService:
                 if tracer and span_ctx:
                     span.set_attribute("credit_dossier.retried", "true")
                 response = await _call_with_retry(
-                    lambda: client.agents.complete_async(
+                    lambda: client.beta.conversations.start_async(
                         agent_id=agent_id,
-                        messages=messages,
+                        inputs=messages[0]["content"],
+                        store=False,
                     ),
                     description=f"Agent completion retry for '{section_title}'",
                 )
-                if getattr(response.choices[0], "message", None):
-                    content = response.choices[0].message.content
-                elif getattr(response.choices[0], "messages", None) and len(response.choices[0].messages) > 0:
-                    content = response.choices[0].messages[-1].content
+                content = conversation_output_content(response)
 
             if not content:
                 if tracer and span_ctx:
@@ -746,17 +772,6 @@ class MistralLibraryService:
                 return f"[Generation failed — agent returned no content for {section_title}]"
 
             # Normalize content — Mistral may return a list of content blocks
-            if isinstance(content, list):
-                parts = []
-                for part in content:
-                    if isinstance(part, str):
-                        parts.append(part)
-                    elif isinstance(part, dict) and part.get("type", "text") == "text" and "text" in part:
-                        parts.append(part["text"])
-                    elif getattr(part, "type", "text") == "text" and hasattr(part, "text"):
-                        parts.append(part.text)
-                content = "\n".join(parts)
-
             # Strip common preambles/search logs that Mistral sometimes outputs
             content = re.sub(r'^Searching\s*\[.*?\].*?(?=\n\n|\n#|\n\*\*|$)', '', content, flags=re.IGNORECASE|re.DOTALL)
             content = re.sub(r'^\s*Here is the.*?based on the available documents:?\s*\n*', '', content, flags=re.IGNORECASE)
@@ -776,28 +791,14 @@ class MistralLibraryService:
                     "subsection, with inline [Source : source_name] markers."
                 )
                 retry_response = await _call_with_retry(
-                    lambda: client.agents.complete_async(
+                    lambda: client.beta.conversations.start_async(
                         agent_id=agent_id,
-                        messages=messages,
+                        inputs=messages[0]["content"],
+                        store=False,
                     ),
                     description=f"Artifact-free retry for '{section_title}'",
                 )
-                retry_content = None
-                if getattr(retry_response.choices[0], "message", None):
-                    retry_content = retry_response.choices[0].message.content
-                elif (
-                    getattr(retry_response.choices[0], "messages", None)
-                    and retry_response.choices[0].messages
-                ):
-                    retry_content = retry_response.choices[0].messages[-1].content
-                if isinstance(retry_content, list):
-                    retry_content = "\n".join(
-                        part if isinstance(part, str) else (
-                            part.get("text", "") if isinstance(part, dict)
-                            else getattr(part, "text", "")
-                        )
-                        for part in retry_content
-                    )
+                retry_content = conversation_output_content(retry_response)
                 if retry_content:
                     cleaned_retry, _ = clean_generation_artifacts(retry_content)
                     if len(cleaned_retry) > len(content):

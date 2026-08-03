@@ -6,12 +6,34 @@ from types import SimpleNamespace
 from app.services.export_service import _section_narrative
 from app.services.mistral_library_service import (
     clean_generation_artifacts,
+    conversation_output_content,
     normalize_inline_sources,
     repair_inline_source_markers,
 )
 
 
 class ExportSourceTests(unittest.TestCase):
+    def test_conversation_tool_references_become_inline_sources(self) -> None:
+        response = SimpleNamespace(
+            outputs=[
+                SimpleNamespace(type="tool.execution"),
+                SimpleNamespace(
+                    type="message.output",
+                    content=[
+                        SimpleNamespace(type="text", text="Revenue increased."),
+                        SimpleNamespace(
+                            type="tool_reference",
+                            title="Annual_Report.pdf",
+                        ),
+                    ],
+                ),
+            ]
+        )
+        self.assertEqual(
+            conversation_output_content(response),
+            "Revenue increased. [Source : Annual_Report.pdf]",
+        )
+
     def test_internal_search_query_is_removed(self) -> None:
         content, leaked = clean_generation_artifacts(
             "Relationship established in 2012.\n"
@@ -31,6 +53,14 @@ class ExportSourceTests(unittest.TestCase):
             "Relationship established in 2012 "
             "[Source : PostgreSQL.credit_dossier.section3a_customer_facilities]"
             "\nNext paragraph.",
+        )
+
+    def test_duplicate_adjacent_sources_are_collapsed(self) -> None:
+        self.assertEqual(
+            repair_inline_source_markers(
+                "Fact. [Source : Report.pdf] [Source : Report.pdf]"
+            ),
+            "Fact. [Source : Report.pdf]",
         )
 
     def test_legacy_references_are_normalized_for_the_editor(self) -> None:
