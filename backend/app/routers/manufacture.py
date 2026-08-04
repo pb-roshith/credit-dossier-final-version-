@@ -11,11 +11,17 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.auth import require_admin
 
-router = APIRouter(prefix="/api/manufacture", tags=["manufacture"])
+
+router = APIRouter(
+    prefix="/api/manufacture",
+    tags=["manufacture"],
+    dependencies=[Depends(require_admin)],
+)
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 MCP_DIR = REPOSITORY_ROOT / "mcp"

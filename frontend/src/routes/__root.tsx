@@ -4,13 +4,16 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useRouterState,
+  useNavigate,
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { AppHeader } from "../components/AppHeader";
+import { AuthProvider, useAuth } from "../lib/auth";
 
 function NotFoundComponent() {
   return (
@@ -114,10 +117,44 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <div className="min-h-screen bg-surface">
-        <AppHeader />
-        <Outlet />
-      </div>
+      <AuthProvider>
+        <AuthenticatedApp />
+      </AuthProvider>
     </QueryClientProvider>
+  );
+}
+
+function AuthenticatedApp() {
+  const { user, loading } = useAuth();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const navigate = useNavigate();
+  const isLogin = pathname === "/login";
+  const isAdminPage = pathname.startsWith("/manufacture-data");
+
+  useEffect(() => {
+    if (loading) return;
+    if (!user && !isLogin) void navigate({ to: "/login", replace: true });
+    if (user && isLogin) void navigate({ to: "/", replace: true });
+    if (user && isAdminPage && user.role !== "admin") {
+      void navigate({ to: "/", replace: true });
+    }
+  }, [user, loading, isLogin, isAdminPage, navigate]);
+
+  if (loading || (!user && !isLogin) || (user && isLogin)) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-surface">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      </div>
+    );
+  }
+
+  if (isLogin) return <Outlet />;
+  if (isAdminPage && user?.role !== "admin") return null;
+
+  return (
+    <div className="min-h-screen bg-surface">
+      <AppHeader />
+      <Outlet />
+    </div>
   );
 }

@@ -263,6 +263,9 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     ...options,
   });
   if (!res.ok) {
+    if (res.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new Event("auth:unauthorized"));
+    }
     const errBody = await res.text().catch(() => "");
     throw new Error(`API ${res.status}: ${errBody}`);
   }

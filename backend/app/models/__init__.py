@@ -5,10 +5,12 @@ from app.models.mistral_agent import MistralAgent
 from app.models.library_file import LibraryFile
 from app.models.library_sync_log import LibrarySyncLog
 from app.models.narrative_version import NarrativeVersion
+from app.models.user import User, AuthSession
 
 __all__ = [
     "Deal", "Section", "AuditEntry", "Version",
     "Upload",
     "DealDocument", "SectionDocumentLink",
     "MistralAgent", "LibraryFile", "LibrarySyncLog", "NarrativeVersion",
+    "User", "AuthSession",
 ]

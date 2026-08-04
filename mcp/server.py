@@ -32,6 +32,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger("local_mcp")
 
+_mistral_client: Mistral | None = None
+
+
+def _get_mistral_client() -> Mistral:
+    """Reuse one Mistral client with a document-list timeout suitable for libraries."""
+    global _mistral_client
+    if _mistral_client is None:
+        _mistral_client = Mistral(
+            api_key=settings.mistral_api_key,
+            timeout_ms=settings.mistral_timeout_ms,
+        )
+    return _mistral_client
+
 mcp = FastMCP(
     "Local Credit Intelligence MCP",
     instructions=(
@@ -134,9 +147,7 @@ def _list_registered_library_documents(client: dict) -> list[dict]:
         logger.warning("MISTRAL_API_KEY is not configured; cannot list library files")
         return []
     try:
-        response = Mistral(
-            api_key=settings.mistral_api_key
-        ).beta.libraries.documents.list(
+        response = _get_mistral_client().beta.libraries.documents.list(
             library_id=client["mistral_library_id"],
             page_size=100,
         )

@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ManufactureDataRouteImport } from './routes/manufacture-data'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DealsNewRouteImport } from './routes/deals.new'
@@ -18,6 +19,11 @@ import { Route as DealsDealIdRouteImport } from './routes/deals.$dealId'
 const ManufactureDataRoute = ManufactureDataRouteImport.update({
   id: '/manufacture-data',
   path: '/manufacture-data',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardRoute = DashboardRouteImport.update({
@@ -44,6 +50,7 @@ const DealsDealIdRoute = DealsDealIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
+  '/login': typeof LoginRoute
   '/manufacture-data': typeof ManufactureDataRoute
   '/deals/$dealId': typeof DealsDealIdRoute
   '/deals/new': typeof DealsNewRoute
@@ -51,6 +58,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
+  '/login': typeof LoginRoute
   '/manufacture-data': typeof ManufactureDataRoute
   '/deals/$dealId': typeof DealsDealIdRoute
   '/deals/new': typeof DealsNewRoute
@@ -59,6 +67,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
+  '/login': typeof LoginRoute
   '/manufacture-data': typeof ManufactureDataRoute
   '/deals/$dealId': typeof DealsDealIdRoute
   '/deals/new': typeof DealsNewRoute
@@ -68,15 +77,23 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/dashboard'
+    | '/login'
     | '/manufacture-data'
     | '/deals/$dealId'
     | '/deals/new'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/dashboard' | '/manufacture-data' | '/deals/$dealId' | '/deals/new'
+  to:
+    | '/'
+    | '/dashboard'
+    | '/login'
+    | '/manufacture-data'
+    | '/deals/$dealId'
+    | '/deals/new'
   id:
     | '__root__'
     | '/'
     | '/dashboard'
+    | '/login'
     | '/manufacture-data'
     | '/deals/$dealId'
     | '/deals/new'
@@ -85,6 +102,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DashboardRoute: typeof DashboardRoute
+  LoginRoute: typeof LoginRoute
   ManufactureDataRoute: typeof ManufactureDataRoute
   DealsDealIdRoute: typeof DealsDealIdRoute
   DealsNewRoute: typeof DealsNewRoute
@@ -97,6 +115,13 @@ declare module '@tanstack/react-router' {
       path: '/manufacture-data'
       fullPath: '/manufacture-data'
       preLoaderRoute: typeof ManufactureDataRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard': {
@@ -133,6 +158,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DashboardRoute: DashboardRoute,
+  LoginRoute: LoginRoute,
   ManufactureDataRoute: ManufactureDataRoute,
   DealsDealIdRoute: DealsDealIdRoute,
   DealsNewRoute: DealsNewRoute,

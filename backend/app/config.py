@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     # ── Production ─────────────────────────────────────────────
     ENABLE_TIMING_METRICS: bool = True
 
+    # Initial local accounts. Override these values in backend/.env.
+    INITIAL_ADMIN_USER_ID: str = "admin"
+    INITIAL_ADMIN_PASSWORD: str = "Admin@123"
+    INITIAL_NORMAL_USER_ID: str = "normal"
+    INITIAL_NORMAL_PASSWORD: str = "Normal@123"
+
     @property
     def is_sqlite(self) -> bool:
         return self.DATABASE_URL.startswith("sqlite")

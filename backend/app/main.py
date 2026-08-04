@@ -16,14 +16,15 @@ load_dotenv()
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import engine, Base
 from app.models import Deal, Section, AuditEntry, Version, Upload  # noqa: F401
 from app.models import DealDocument, SectionDocumentLink  # noqa: F401 — register models
-from app.models import MistralAgent, LibraryFile, NarrativeVersion  # noqa: F401
+from app.models import MistralAgent, LibraryFile, NarrativeVersion, User, AuthSession  # noqa: F401
+from app.auth import get_current_user
 from app.routers.deals import router as deals_router
 from app.routers.sections import router as sections_router
 from app.routers.versions import router as versions_router
@@ -33,6 +34,7 @@ from app.routers.documents import router as documents_router
 from app.routers.library import router as library_router
 from app.routers.mcp import router as mcp_router
 from app.routers.manufacture import router as manufacture_router
+from app.routers.auth import router as auth_router
 
 # Configure logging
 logging.basicConfig(
@@ -58,9 +60,18 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     from app.migrations import apply_additive_migrations
     apply_additive_migrations(engine)
-    logger.info(f"[startup] Database ready ({(time.time() - t_step)*1000:.0f}ms)")
 
     from app.database import SessionLocal
+    from app.auth import seed_initial_users
+    from app.services.library_sync_service import LibrarySyncService
+    auth_db = SessionLocal()
+    try:
+        seed_initial_users(auth_db)
+        LibrarySyncService.reset_interrupted_syncs(auth_db)
+    finally:
+        auth_db.close()
+    logger.info(f"[startup] Database ready ({(time.time() - t_step)*1000:.0f}ms)")
+
     from app.services.mistral_library_service import MistralLibraryService
     from app.services.mcp_service import MCPClientService
     from app.config import settings
@@ -137,15 +148,17 @@ app.add_middleware(
 )
 
 # ── Mount routers ───────────────────────────────────────────────
-app.include_router(deals_router)
-app.include_router(sections_router)
-app.include_router(versions_router)
-app.include_router(uploads_router)
-app.include_router(exports_router)
-app.include_router(documents_router)
-app.include_router(library_router)
-app.include_router(mcp_router)
-app.include_router(manufacture_router)
+authenticated = [Depends(get_current_user)]
+app.include_router(auth_router)
+app.include_router(deals_router, dependencies=authenticated)
+app.include_router(sections_router, dependencies=authenticated)
+app.include_router(versions_router, dependencies=authenticated)
+app.include_router(uploads_router, dependencies=authenticated)
+app.include_router(exports_router, dependencies=authenticated)
+app.include_router(documents_router, dependencies=authenticated)
+app.include_router(library_router, dependencies=authenticated)
+app.include_router(mcp_router, dependencies=authenticated)
+app.include_router(manufacture_router, dependencies=authenticated)
 
 
 @app.get("/api/health")

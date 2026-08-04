@@ -72,8 +72,10 @@ def get_deal(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depe
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
         
-    # Refresh the direct company-library link in the background.
-    background_tasks.add_task(LibrarySyncService.check_for_new_documents, deal.id)
+    # Resolve a new deal once. Subsequent refreshes are explicit, preventing
+    # frontend polling from continuously restarting the same remote operation.
+    if deal.library_sync_status == "not_started":
+        background_tasks.add_task(LibrarySyncService.check_for_new_documents, deal.id)
         
     return deal
 

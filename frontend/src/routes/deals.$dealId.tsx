@@ -268,6 +268,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const [markingFinalVersionId, setMarkingFinalVersionId] = useState<string | null>(null);
   const [deletingNarrativeVersionId, setDeletingNarrativeVersionId] = useState<string | null>(null);
   const [expandedVersionIds, setExpandedVersionIds] = useState<Set<string>>(new Set());
+  const [retryingLibrarySync, setRetryingLibrarySync] = useState(false);
 
   // Moderation state
   const [moderationError, setModerationError] = useState<string | null>(null);
@@ -516,7 +517,22 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const isFlagged = active.moderation_status === "flagged";
   const isModerationSafe = active.moderation_status === "safe";
   const flaggedCategories = active.moderation_details?.flagged_categories || [];
-  const isSyncing = deal.library_sync_status === "syncing";
+  const isRefreshingLibrary = deal.library_sync_status === "syncing";
+  const isSyncing = isRefreshingLibrary && !deal.company_mistral_library_id;
+  const librarySyncFailed = deal.library_sync_status === "error";
+
+  const retryLibrarySync = async () => {
+    if (retryingLibrarySync) return;
+    setRetryingLibrarySync(true);
+    try {
+      await api.library.triggerSync(deal.id);
+      refresh();
+    } catch (err) {
+      console.error("Retrying library refresh failed:", err);
+    } finally {
+      setRetryingLibrarySync(false);
+    }
+  };
   const liveDraftSections = draftAllJob?.sections.filter(
     section => section.status === "running",
   ) || [];
@@ -531,15 +547,41 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       {/* ── Left Panel: Section List ── */}
       <div className="space-y-3">
         {/* Syncing Banner */}
-        {isSyncing && (
+        {isRefreshingLibrary && (
           <div className="rounded-md bg-blue-50 border border-blue-200 p-3">
             <div className="flex items-center gap-2 text-blue-700">
               <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-              <div className="text-xs font-medium">Library sync in progress...</div>
+              <div className="text-xs font-medium">Library refresh in progress...</div>
             </div>
             <p className="text-[10px] text-blue-600 mt-1 leading-relaxed">
-              Documents are being uploaded to the Mistral Library. Generation is paused until sync completes.
+              {isSyncing
+                ? "The company source-library link is being resolved. Generation will resume automatically."
+                : "The source library is already linked, so generation remains available while document details refresh."}
             </p>
+          </div>
+        )}
+
+        {librarySyncFailed && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-3">
+            <div className="text-xs font-medium text-amber-800">
+              Library refresh timed out
+            </div>
+            <p className="mt-1 text-[10px] leading-relaxed text-amber-700">
+              Existing linked documents remain available. You can continue generating or retry the refresh.
+            </p>
+            <button
+              type="button"
+              onClick={retryLibrarySync}
+              disabled={retryingLibrarySync}
+              className="mt-2 inline-flex items-center gap-1.5 rounded border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-800 hover:bg-amber-100 disabled:opacity-60"
+            >
+              {retryingLibrarySync ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3 w-3" />
+              )}
+              Retry library refresh
+            </button>
           </div>
         )}
 
@@ -1035,6 +1077,11 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                       version.version_type === "edited"
                         ? "bg-pink-100 text-pink-700"
                         : "bg-blue-100 text-blue-700";
+                    const previousVersion = version.parent_version_id
+                      ? narrativeVersions.find(
+                          item => item.id === version.parent_version_id,
+                        )
+                      : narrativeVersions[index + 1];
 
                     return (
                       <div
@@ -1072,8 +1119,21 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                         <p className="mt-1 text-[11px] text-muted-foreground">
                           {version.created_by}
                         </p>
-                        <pre className="mt-3 whitespace-pre-wrap rounded-md border bg-muted/30 p-3 font-sans text-xs leading-5 text-slate-700">
-                          {preview}
+                        <pre
+                          className={`mt-3 whitespace-pre-wrap rounded-md border p-3 font-sans text-xs leading-5 text-slate-700 ${
+                            version.version_type === "edited"
+                              ? "border-amber-200 bg-amber-50/60"
+                              : "bg-muted/30"
+                          }`}
+                        >
+                          {version.version_type === "edited" ? (
+                            <VersionHistoryContent
+                              previous={previousVersion?.content || ""}
+                              current={preview}
+                            />
+                          ) : (
+                            preview
+                          )}
                         </pre>
                         <div className="mt-3 flex flex-wrap items-center gap-2">
                           {canExpand && (
@@ -1730,6 +1790,33 @@ function CustomTable({ children, primaryColor, secondaryColor, node, ...props }:
   );
 }
 
+
+function VersionHistoryContent({ previous, current }: { previous: string; current: string }) {
+  if (!previous) {
+    return <mark className="rounded-sm bg-amber-200/80 px-0.5 text-amber-950">{current}</mark>;
+  }
+
+  const comparisonBase = previous.slice(0, Math.max(current.length, 650));
+  return (
+    <>
+      {diffWords(comparisonBase, current).map((part, index) => {
+        if (part.removed) return null;
+        if (part.added) {
+          return (
+            <mark
+              key={index}
+              className="rounded-sm bg-amber-300 px-0.5 text-amber-950"
+              title="Edited text"
+            >
+              {part.value}
+            </mark>
+          );
+        }
+        return <React.Fragment key={index}>{part.value}</React.Fragment>;
+      })}
+    </>
+  );
+}
 
 function DiffViewer({ original, current, primaryColor, secondaryColor, documents }: { original: string, current: string, primaryColor?: string, secondaryColor?: string, documents?: DealDocument[] }) {
   const diffs = diffWords(original, current);

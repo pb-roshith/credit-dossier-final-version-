@@ -22,6 +22,7 @@ class Settings:
     postgres_user: str = os.getenv("POSTGRES_USER", "postgres")
     postgres_password: str = os.getenv("POSTGRES_PASSWORD", "root")
     mistral_api_key: str = os.getenv("MISTRAL_API_KEY", "")
+    mistral_timeout_ms: int = int(os.getenv("MISTRAL_TIMEOUT_MS", "60000"))
     mcp_host: str = os.getenv("MCP_HOST", "127.0.0.1")
     mcp_port: int = int(os.getenv("MCP_PORT", "8001"))
     mcp_transport: str = os.getenv("MCP_TRANSPORT", "sse")

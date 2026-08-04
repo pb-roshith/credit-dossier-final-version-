@@ -5,6 +5,7 @@ only their references and never downloads or uploads duplicate document bytes.
 """
 
 import logging
+import threading
 from datetime import datetime, timezone
 
 from app.database import SessionLocal
@@ -16,6 +17,8 @@ from app.services.mistral_library_service import MistralLibraryService
 
 
 logger = logging.getLogger(__name__)
+_active_syncs: set[str] = set()
+_active_syncs_lock = threading.Lock()
 
 
 def _now() -> datetime:
@@ -32,24 +35,51 @@ def _library_id_from_url(url: str | None) -> str | None:
 
 class LibrarySyncService:
     @staticmethod
+    def reset_interrupted_syncs(db) -> int:
+        """Release sync states left behind by a backend restart or terminated job."""
+        count = (
+            db.query(Deal)
+            .filter(Deal.library_sync_status == "syncing")
+            .update({Deal.library_sync_status: "error"}, synchronize_session=False)
+        )
+        if count:
+            db.commit()
+            logger.warning("Released %s interrupted library sync state(s)", count)
+        return count
+
+    @staticmethod
     async def sync_mcp_documents(deal_id: str) -> None:
         """Refresh direct MCP/Mistral references without copying documents."""
+        with _active_syncs_lock:
+            if deal_id in _active_syncs:
+                logger.info("Company-library refresh already running for %s", deal_id)
+                return
+            _active_syncs.add(deal_id)
+
         db = SessionLocal()
         try:
             deal = DealService.get_deal(db, deal_id)
             if not deal:
                 logger.error("Company-library link failed: deal %s not found", deal_id)
                 return
-            if deal.library_sync_status == "syncing":
-                logger.info("Company-library refresh already running for %s", deal_id)
-                return
-
             deal.library_sync_status = "syncing"
             db.commit()
 
+            existing_library_id = deal.company_mistral_library_id
+            existing_document_count = deal.company_document_count
             details = await MCPClientService.get_company_details(deal.customer)
-            documents = await MCPClientService.get_documents(deal.customer)
             company_library_id = details.get("mistral_library_id")
+
+            # As soon as the source library is known, generation is safe. Document
+            # listing and timeline updates can finish in the background.
+            if company_library_id or existing_library_id:
+                deal.company_mistral_library_id = (
+                    company_library_id or existing_library_id
+                )
+                deal.library_sync_status = "ready"
+                db.commit()
+
+            documents = await MCPClientService.get_documents(deal.customer)
             if not company_library_id:
                 company_library_id = next(
                     (
@@ -63,9 +93,11 @@ class LibrarySyncService:
                     ),
                     None,
                 )
+            if not company_library_id:
+                company_library_id = existing_library_id
 
             if not company_library_id:
-                deal.company_mistral_library_id = None
+                # No previous link and no source library was returned.
                 deal.company_document_count = 0
                 deal.library_sync_status = "ready"
                 db.commit()
@@ -73,7 +105,11 @@ class LibrarySyncService:
                 return
 
             deal.company_mistral_library_id = company_library_id
-            deal.company_document_count = len(documents)
+            # A temporary Mistral listing timeout must not erase a previously
+            # known document count or source-library link.
+            deal.company_document_count = (
+                len(documents) if documents else existing_document_count
+            )
 
             latest_logs = {
                 log.doc_title: log
@@ -134,6 +170,8 @@ class LibrarySyncService:
                 db.rollback()
         finally:
             db.close()
+            with _active_syncs_lock:
+                _active_syncs.discard(deal_id)
 
     @staticmethod
     async def check_for_new_documents(deal_id: str) -> dict:
