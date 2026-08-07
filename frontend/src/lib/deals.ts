@@ -7,7 +7,13 @@ const API_BASE = "/api";
 
 // ── Types ──────────────────────────────────────────────────────
 
-export type Status = "Draft" | "In Progress" | "In Review" | "Approved" | "Exported";
+export type Status =
+  | "Draft"
+  | "In Progress"
+  | "In Review"
+  | "Changes Requested"
+  | "Approved"
+  | "Exported";
 export type DealType = "Existing" | "New-to-bank";
 
 export type UploadBrief = {
@@ -94,6 +100,22 @@ export type Section = {
     flagged_categories: string[];
     details: Record<string, unknown>;
   } | null;
+  observability_details: {
+    moderation?: AgentMetrics;
+    orchestration?: AgentMetrics;
+    section_agent?: AgentMetrics;
+    judge?: AgentMetrics;
+    claim_evaluator?: AgentMetrics;
+  } | null;
+  source_urls: string[];
+  url_scrape_details: Array<{
+    url: string;
+    final_url: string | null;
+    title: string;
+    status: "completed" | "failed";
+    characters: number;
+    error: string | null;
+  }> | null;
   uploads: UploadBrief[]; // Legacy
   document_links: SectionDocumentLink[]; // Legacy
 };
@@ -110,6 +132,9 @@ export type Version = {
   id: string;
   notes: string;
   status: string;
+  review_comments: string | null;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
   created_at: string;
 };
 
@@ -142,7 +167,7 @@ export type Deal = {
   primary_color: string;
   secondary_color: string;
   theme_palette: string[];
-  
+
   sections: Section[];
   documents: DealDocument[];
   library_files: LibraryFile[];
@@ -151,7 +176,10 @@ export type Deal = {
   versions: Version[];
 };
 
-export type DealListItem = Omit<Deal, "sections" | "audit_entries" | "versions" | "documents" | "library_files" | "sync_logs"> & {
+export type DealListItem = Omit<
+  Deal,
+  "sections" | "audit_entries" | "versions" | "documents" | "library_files" | "sync_logs"
+> & {
   sections_ready: number;
   sections_total: number;
   versions_count: number;
@@ -195,6 +223,17 @@ export type DraftAllResponse = {
   total: number;
   succeeded: number;
   failed: number;
+};
+
+export type AgentMetrics = {
+  name: string;
+  model: string;
+  status: string;
+  latency_ms: number | null;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  token_usage_available?: boolean;
 };
 
 export type DraftSectionProgress = {
@@ -259,7 +298,10 @@ export type ManufactureJob = {
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
-    headers: { "Content-Type": "application/json", ...(options?.headers as Record<string, string>) },
+    headers: {
+      "Content-Type": "application/json",
+      ...(options?.headers as Record<string, string>),
+    },
     ...options,
   });
   if (!res.ok) {
@@ -300,15 +342,25 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify(data),
       }),
-    delete: (id: string) =>
-      request<void>(`${API_BASE}/deals/${id}`, { method: "DELETE" }),
+    delete: (id: string) => request<void>(`${API_BASE}/deals/${id}`, { method: "DELETE" }),
   },
 
   // Sections
   sections: {
-    list: (dealId: string) =>
-      request<Section[]>(`${API_BASE}/deals/${dealId}/sections`),
-    update: (dealId: string, sectionId: string, data: { expected_output?: string; custom_instructions?: string | null; state?: string; output_template?: string | null; generated_content?: string }) =>
+    list: (dealId: string) => request<Section[]>(`${API_BASE}/deals/${dealId}/sections`),
+    update: (
+      dealId: string,
+      sectionId: string,
+      data: {
+        sources?: string;
+        expected_output?: string;
+        custom_instructions?: string | null;
+        state?: string;
+        output_template?: string | null;
+        generated_content?: string;
+        source_urls?: string[];
+      },
+    ) =>
       request<Section>(`${API_BASE}/deals/${dealId}/sections/${sectionId}`, {
         method: "PATCH",
         body: JSON.stringify(data),
@@ -323,14 +375,11 @@ export const api = {
         method: "POST",
       }),
     startGenerateAll: (dealId: string) =>
-      request<DraftAllJob>(
-        `${API_BASE}/deals/${dealId}/sections/generate-all/start`,
-        { method: "POST" },
-      ),
+      request<DraftAllJob>(`${API_BASE}/deals/${dealId}/sections/generate-all/start`, {
+        method: "POST",
+      }),
     generateAllStatus: (dealId: string, jobId: string) =>
-      request<DraftAllJob>(
-        `${API_BASE}/deals/${dealId}/sections/generate-all/jobs/${jobId}`,
-      ),
+      request<DraftAllJob>(`${API_BASE}/deals/${dealId}/sections/generate-all/jobs/${jobId}`),
     uploadTemplate: async (dealId: string, sectionId: string, formData: FormData) => {
       const res = await fetch(`${API_BASE}/deals/${dealId}/sections/${sectionId}/template`, {
         method: "POST",
@@ -354,46 +403,39 @@ export const api = {
         method: "POST",
       }),
     versions: (dealId: string, sectionId: string) =>
-      request<NarrativeVersion[]>(
-        `${API_BASE}/deals/${dealId}/sections/${sectionId}/versions`,
-      ),
-    markVersionFinal: (
-      dealId: string,
-      sectionId: string,
-      versionId: string,
-    ) =>
+      request<NarrativeVersion[]>(`${API_BASE}/deals/${dealId}/sections/${sectionId}/versions`),
+    markVersionFinal: (dealId: string, sectionId: string, versionId: string) =>
       request<NarrativeVersion>(
         `${API_BASE}/deals/${dealId}/sections/${sectionId}/versions/${versionId}/mark-final`,
         { method: "POST" },
       ),
-    deleteVersion: (
-      dealId: string,
-      sectionId: string,
-      versionId: string,
-    ) =>
+    deleteVersion: (dealId: string, sectionId: string, versionId: string) =>
       request<{
         deleted: boolean;
         deleted_version_id: string;
         remaining_count: number;
         current_version_id: string | null;
         uses_default_final: boolean;
-      }>(
-        `${API_BASE}/deals/${dealId}/sections/${sectionId}/versions/${versionId}`,
-        { method: "DELETE" },
-      ),
+      }>(`${API_BASE}/deals/${dealId}/sections/${sectionId}/versions/${versionId}`, {
+        method: "DELETE",
+      }),
   },
 
   // Mistral Document Library (NEW)
   library: {
-    list: (dealId: string) =>
-      request<LibraryFile[]>(`${API_BASE}/deals/${dealId}/library`),
+    list: (dealId: string) => request<LibraryFile[]>(`${API_BASE}/deals/${dealId}/library`),
     upload: async (dealId: string, formData: FormData) => {
-      const res = await fetch(`${API_BASE}/deals/${dealId}/library`, { method: "POST", body: formData });
+      const res = await fetch(`${API_BASE}/deals/${dealId}/library`, {
+        method: "POST",
+        body: formData,
+      });
       if (!res.ok) throw new Error("Failed to upload library file");
       return res.json();
     },
     delete: async (dealId: string, fileId: string) => {
-      const res = await fetch(`${API_BASE}/deals/${dealId}/library/${fileId}`, { method: "DELETE" });
+      const res = await fetch(`${API_BASE}/deals/${dealId}/library/${fileId}`, {
+        method: "DELETE",
+      });
       if (!res.ok) throw new Error("Failed to delete library file");
       return res.json();
     },
@@ -410,7 +452,7 @@ export const api = {
     initialize: (dealId: string) =>
       request<{ library_id: string; agents_created: number; agent_keys: string[] }>(
         `${API_BASE}/deals/${dealId}/library/initialize`,
-        { method: "POST" }
+        { method: "POST" },
       ),
   },
 
@@ -421,16 +463,21 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ notes }),
       }),
-    approve: (dealId: string, versionId: string) =>
+    approve: (dealId: string, versionId: string, comments: string) =>
       request<Version>(`${API_BASE}/deals/${dealId}/versions/${versionId}/approve`, {
         method: "PATCH",
+        body: JSON.stringify({ comments }),
+      }),
+    deny: (dealId: string, versionId: string, comments: string) =>
+      request<Version>(`${API_BASE}/deals/${dealId}/versions/${versionId}/deny`, {
+        method: "PATCH",
+        body: JSON.stringify({ comments }),
       }),
   },
 
   // Deal Documents (Legacy — kept for backward compat)
   documents: {
-    list: (dealId: string) =>
-      request<DealDocument[]>(`${API_BASE}/deals/${dealId}/documents`),
+    list: (dealId: string) => request<DealDocument[]>(`${API_BASE}/deals/${dealId}/documents`),
     upload: async (dealId: string, formData: FormData) => {
       const res = await fetch(`${API_BASE}/deals/${dealId}/documents`, {
         method: "POST",
@@ -442,10 +489,13 @@ export const api = {
     delete: (dealId: string, docId: string) =>
       request<void>(`${API_BASE}/deals/${dealId}/documents/${docId}`, { method: "DELETE" }),
     linkToSection: (dealId: string, sectionId: string, documentIds: string[]) =>
-      request<SectionDocumentLink[]>(`${API_BASE}/deals/${dealId}/sections/${sectionId}/documents/link`, {
-        method: "POST",
-        body: JSON.stringify({ document_ids: documentIds }),
-      }),
+      request<SectionDocumentLink[]>(
+        `${API_BASE}/deals/${dealId}/sections/${sectionId}/documents/link`,
+        {
+          method: "POST",
+          body: JSON.stringify({ document_ids: documentIds }),
+        },
+      ),
     unlinkFromSection: (dealId: string, sectionId: string, docId: string) =>
       request<void>(`${API_BASE}/deals/${dealId}/sections/${sectionId}/documents/${docId}/unlink`, {
         method: "DELETE",
@@ -478,8 +528,7 @@ export const api = {
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const contentDisposition = res.headers.get("content-disposition");
-      const filename = contentDisposition?.match(/filename="(.+)"/)?.[1]
-        || `PitchBook.${format}`;
+      const filename = contentDisposition?.match(/filename="(.+)"/)?.[1] || `PitchBook.${format}`;
       const a = document.createElement("a");
       a.href = url;
       a.download = filename;
@@ -504,15 +553,27 @@ export const api = {
       URL.revokeObjectURL(url);
     },
   },
-  
+
   // MCP Companies
   companies: {
     list: () =>
-      request<Array<{ name: string; blob_url: string; document_count: number }>>(`${API_BASE}/companies`),
+      request<Array<{ name: string; blob_url: string; document_count: number }>>(
+        `${API_BASE}/companies`,
+      ),
     documents: (companyName: string) =>
-      request<Array<{ document_name: string; document_url: string; summary?: string; size?: number; type?: string }>>(`${API_BASE}/companies/${encodeURIComponent(companyName)}/documents`),
+      request<
+        Array<{
+          document_name: string;
+          document_url: string;
+          summary?: string;
+          size?: number;
+          type?: string;
+        }>
+      >(`${API_BASE}/companies/${encodeURIComponent(companyName)}/documents`),
     details: (companyName: string) =>
-      request<{ industry?: string; geography?: string; segment?: string; kyc_status?: string }>(`${API_BASE}/companies/${encodeURIComponent(companyName)}/details`),
+      request<{ industry?: string; geography?: string; segment?: string; kyc_status?: string }>(
+        `${API_BASE}/companies/${encodeURIComponent(companyName)}/details`,
+      ),
   },
 
   // Local MCP synthetic-data manufacturing
@@ -522,8 +583,7 @@ export const api = {
         method: "POST",
         body: JSON.stringify(data),
       }),
-    status: (jobId: string) =>
-      request<ManufactureJob>(`${API_BASE}/manufacture/${jobId}`),
+    status: (jobId: string) => request<ManufactureJob>(`${API_BASE}/manufacture/${jobId}`),
   },
 };
 

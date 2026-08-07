@@ -18,8 +18,9 @@ from app.schemas.deal import (
 )
 from app.services.ingestion_service import IngestionService
 from app.services.deal_service import DealService
+from app.auth import require_deal_owner
 
-router = APIRouter(prefix="/api/deals/{deal_id}", tags=["documents"])
+router = APIRouter(prefix="/api/deals/{deal_id}", tags=["documents"], dependencies=[Depends(require_deal_owner)])
 
 
 # ── Deal-Level Document Management ─────────────────────────────
@@ -116,6 +117,12 @@ def delete_deal_document(
     db: Session = Depends(get_db),
 ):
     """Delete a document from the deal library (and all section links)."""
+    document = db.query(DealDocument).filter(
+        DealDocument.id == document_id,
+        DealDocument.deal_id == deal_id,
+    ).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
     if not IngestionService.delete_deal_document(db, document_id):
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -138,7 +145,10 @@ def link_documents_to_section(
     Accepts a list of document IDs. Idempotent — already-linked documents
     are returned without creating duplicates.
     """
-    section = DealService.get_section(db, section_id)
+    section = db.query(Section).filter(
+        Section.id == section_id,
+        Section.deal_id == deal_id,
+    ).first()
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
 
@@ -175,6 +185,16 @@ def unlink_document_from_section(
     db: Session = Depends(get_db),
 ):
     """Remove a document link from a section (does not delete the document)."""
+    section = db.query(Section).filter(
+        Section.id == section_id,
+        Section.deal_id == deal_id,
+    ).first()
+    document = db.query(DealDocument).filter(
+        DealDocument.id == document_id,
+        DealDocument.deal_id == deal_id,
+    ).first()
+    if not section or not document:
+        raise HTTPException(status_code=404, detail="Document link not found")
     if not IngestionService.unlink_document_from_section(
         db, section_id, document_id
     ):
@@ -193,7 +213,10 @@ def list_section_documents(
     db: Session = Depends(get_db),
 ):
     """List all documents linked to a specific section."""
-    section = DealService.get_section(db, section_id)
+    section = db.query(Section).filter(
+        Section.id == section_id,
+        Section.deal_id == deal_id,
+    ).first()
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
 

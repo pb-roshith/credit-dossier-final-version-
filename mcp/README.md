@@ -50,19 +50,11 @@ The server also exposes 16-table discovery/query tools, an aggregate
 `manufacture_company_data`. Narrative generation uses the relevant PostgreSQL
 tables together with the PDFs when structured rows exist for the client.
 
-## Register real-world data without manufacturing
-
-If real documents already exist in a Mistral Library, a developer can register
-the client using only Legal name, Industry, Geography, and Mistral Library ID.
-The client then appears in the New Deal dropdown and its library documents are
-referenced directly when a deal is created; they are not downloaded or copied
-into a second library. See [REGISTER_REAL_CLIENT.md](REGISTER_REAL_CLIENT.md)
-for the PostgreSQL statement and MCP tool.
-
 ## Manufacture data from the command line
 
 ```powershell
 python manufacture.py `
+  --owner-user-id "backend-user-uuid" `
   --company-name "Aster Auto Components Limited" `
   --industry "Auto components manufacturing" `
   --geography "Pune, India"

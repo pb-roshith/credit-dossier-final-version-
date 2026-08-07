@@ -14,13 +14,13 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.auth import require_admin
+from app.auth import get_current_user
+from app.models.user import User
 
 
 router = APIRouter(
     prefix="/api/manufacture",
     tags=["manufacture"],
-    dependencies=[Depends(require_admin)],
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -50,7 +50,7 @@ def _set_job(job_id: str, **updates: Any) -> None:
         _jobs[job_id].update(updates)
 
 
-def _run_manufacturing(job_id: str, request: ManufactureRequest) -> None:
+def _run_manufacturing(job_id: str, owner_key: str, request: ManufactureRequest) -> None:
     _set_job(
         job_id,
         status="running",
@@ -60,6 +60,8 @@ def _run_manufacturing(job_id: str, request: ManufactureRequest) -> None:
     command = [
         sys.executable,
         "manufacture.py",
+        "--owner-user-id",
+        owner_key,
         "--company-name",
         request.company_name,
         "--industry",
@@ -87,7 +89,7 @@ def _run_manufacturing(job_id: str, request: ManufactureRequest) -> None:
             raise RuntimeError("Manufacturing process returned no result.")
         result = json.loads(output_lines[-1])
         from app.services.mcp_service import MCPClientService
-        MCPClientService.invalidate_cache(request.company_name)
+        MCPClientService.invalidate_cache(request.company_name, owner_key)
         _set_job(
             job_id,
             status="completed",
@@ -106,7 +108,10 @@ def _run_manufacturing(job_id: str, request: ManufactureRequest) -> None:
 
 
 @router.post("", response_model=ManufactureJob, status_code=202)
-def start_manufacturing(request: ManufactureRequest) -> ManufactureJob:
+def start_manufacturing(
+    request: ManufactureRequest,
+    current_user: User = Depends(get_current_user),
+) -> ManufactureJob:
     """Start one background manufacturing job."""
     if not (MCP_DIR / "manufacture.py").exists():
         raise HTTPException(status_code=500, detail="Local MCP service is missing.")
@@ -118,19 +123,27 @@ def start_manufacturing(request: ManufactureRequest) -> ManufactureJob:
         "stage": "Queued for manufacturing",
         "result": None,
         "error": None,
+        "owner_user_id": current_user.id,
     }
     with _jobs_lock:
         _jobs[job_id] = job
-    _executor.submit(_run_manufacturing, job_id, request)
+    _executor.submit(_run_manufacturing, job_id, current_user.user_id, request)
     return ManufactureJob(**job)
 
 
 @router.get("/{job_id}", response_model=ManufactureJob)
-def get_manufacturing_job(job_id: str) -> ManufactureJob:
+def get_manufacturing_job(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+) -> ManufactureJob:
     """Return current progress and the final manufacturing result."""
     with _jobs_lock:
         job = _jobs.get(job_id)
-        snapshot = dict(job) if job else None
+        snapshot = (
+            dict(job)
+            if job and job.get("owner_user_id") == current_user.id
+            else None
+        )
     if not snapshot:
         raise HTTPException(status_code=404, detail="Manufacturing job not found.")
     return ManufactureJob(**snapshot)

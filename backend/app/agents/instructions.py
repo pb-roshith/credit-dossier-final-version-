@@ -14,20 +14,35 @@ Anti-hallucination guardrails are appended automatically by BaseSectionAgent.
 ANTI_HALLUCINATION_FOOTER = """
 
 CRITICAL ANTI-HALLUCINATION RULES (MANDATORY):
-1. ONLY use information retrieved from the document library via your search tool.
-2. If the library search returns no relevant documents for a data point, explicitly state "[Data not available in provided documents]".
+1. ONLY use information from the approved evidence supplied for this request: the
+   document library, the structured PostgreSQL context, and the Section Web Sources.
+2. If none of those approved sources contains a data point, explicitly state
+   "[Data not available in provided sources]".
 3. NEVER fabricate or invent numbers, dates, percentages, financial figures, credit ratings, or growth rates.
-4. Put the source immediately after every sourced statement using this exact inline format: [Source : Exact_Document_Name.pdf].
-5. For structured database facts, use the table name in the same format, for example [Source : PostgreSQL.credit_income_statement].
-6. NEVER add a References, Sources, Bibliography, or footnotes section at the bottom. All source attribution must remain inline.
-7. If insufficient data is available to write a complete sub-section, produce what you can from available documents and clearly mark gaps with "[Insufficient data]".
-8. Do NOT extrapolate trends beyond what the documents explicitly state.
-9. Distinguish clearly between facts from documents and your analytical commentary.
-10. Do NOT include a main title/heading for the section — the system adds that automatically. You may use subheadings.
-11. Use markdown formatting for structure (bullets, tables, bold, etc.).
-12. NEVER output any preamble, introductory text, or summary of your search actions (e.g. do NOT output "Searching for...", "Here is the section...", etc). Output ONLY the final markdown content for the section.
-13. If an ORCHESTRATION STRATEGY is provided, use its recommended search queries and priority data points to focus your library search. Prioritize the documents and data points indicated.
-14. If the orchestration strategy identifies GAPS (missing data), proactively mark those areas with "[Data not available]" rather than inventing content.
+4. Put the actual source immediately after every sourced statement. For a PDF use
+   [Source : Exact_Document_Name.pdf]; for a database fact use
+   [Source : PostgreSQL.exact_table_name]; and for a webpage use
+   [Source : https://exact-url].
+5. Never label a PDF or webpage fact as PostgreSQL. Cite every source used for a
+   combined statement with adjacent markers, for example
+   [Source : Annual_Report.pdf] [Source : PostgreSQL.credit_income_statement].
+6. INLINE means the marker must be in the same sentence, bullet, or Markdown table
+   cell as the fact it supports—not at the end of a paragraph or subsection. Every
+   factual table row must contain its applicable citation. Never group citations
+   into a source list. In a Markdown table, append the citation inside the same cell
+   as its value. Never create a separate citation-only table row.
+7. Never output opaque retrieval IDs, chunk IDs, file IDs, or short alphanumeric
+   reference codes. A PDF citation must use its human-readable filename. Always use
+   a singular [Source : ...] marker; never emit a plural source group.
+8. NEVER add a References, Sources, Bibliography, or footnotes section at the bottom. All source attribution must remain inline.
+9. If insufficient data is available to write a complete sub-section, produce what you can from available documents and clearly mark gaps with "[Insufficient data]".
+10. Do NOT extrapolate trends beyond what the documents explicitly state.
+11. Distinguish clearly between facts from documents and your analytical commentary.
+12. Do NOT include a main title/heading for the section — the system adds that automatically. You may use subheadings.
+13. Use markdown formatting for structure (bullets, tables, bold, etc.).
+14. NEVER output any preamble, introductory text, or summary of your search actions (e.g. do NOT output "Searching for...", "Here is the section...", etc). Output ONLY the final markdown content for the section.
+15. If an ORCHESTRATION STRATEGY is provided, use its recommended search queries and priority data points to focus your library search. Prioritize the documents and data points indicated.
+16. If the orchestration strategy identifies GAPS (missing data), proactively mark those areas with "[Data not available]" rather than inventing content.
 """
 
 # ── Section Instructions ────────────────────────────────────────────────

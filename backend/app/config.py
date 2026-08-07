@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     MISTRAL_API_KEY: str = "your_mistral_api_key_here"
     MISTRAL_MODEL: str = "mistral-large-latest"
     MISTRAL_AGENT_MODEL: str = "mistral-large-latest"
+    MISTRAL_ACCURACY_JUDGE_ID: str = ""
+    MISTRAL_ACCURACY_JUDGE_MAX_SCORE: float = 100.0
 
     # ── Database ────────────────────────────────────────────────
     # SQLite:      sqlite:///./credit_dossier.db
@@ -47,10 +49,10 @@ class Settings(BaseSettings):
     ENABLE_TIMING_METRICS: bool = True
 
     # Initial local accounts. Override these values in backend/.env.
-    INITIAL_ADMIN_USER_ID: str = "admin"
-    INITIAL_ADMIN_PASSWORD: str = "Admin@123"
-    INITIAL_NORMAL_USER_ID: str = "normal"
-    INITIAL_NORMAL_PASSWORD: str = "Normal@123"
+    INITIAL_RELATIONSHIP_MANAGER_USER_ID: str = "manager"
+    INITIAL_RELATIONSHIP_MANAGER_PASSWORD: str = ""
+    INITIAL_CREDIT_ANALYST_USER_ID: str = "analyst"
+    INITIAL_CREDIT_ANALYST_PASSWORD: str = ""
 
     @property
     def is_sqlite(self) -> bool:

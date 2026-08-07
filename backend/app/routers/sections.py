@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import SessionLocal, get_db
+from app.models.deal import Section
 from app.schemas.deal import (
     NarrativeVersionResponse,
     SectionResponse,
@@ -29,10 +30,18 @@ from app.services.narrative_service import NarrativeService
 from app.services.ingestion_service import extract_text_preview
 from app.services.moderation_service import ModerationService
 from app.services.narrative_version_service import NarrativeVersionService
+from app.auth import require_deal_owner
 
-router = APIRouter(prefix="/api/deals/{deal_id}/sections", tags=["sections"])
+router = APIRouter(prefix="/api/deals/{deal_id}/sections", tags=["sections"], dependencies=[Depends(require_deal_owner)])
 _draft_all_jobs: dict[str, dict[str, Any]] = {}
 _draft_all_jobs_lock = threading.Lock()
+
+
+def _get_deal_section(db: Session, deal_id: str, section_id: str):
+    return db.query(Section).filter(
+        Section.id == section_id,
+        Section.deal_id == deal_id,
+    ).first()
 
 
 def _draft_job_snapshot(job_id: str) -> dict[str, Any] | None:
@@ -120,12 +129,16 @@ async def update_section(
 ):
     """Update section expected output, custom instructions, output template, or state."""
     update_data = data.model_dump(exclude_unset=True)
-    existing_section = DealService.get_section(db, section_id)
+    existing_section = _get_deal_section(db, deal_id, section_id)
+    if not existing_section:
+        raise HTTPException(status_code=404, detail="Section not found")
     previous_content = (
         existing_section.generated_content if existing_section else None
     )
     if existing_section and "generated_content" in update_data:
         NarrativeVersionService.ensure_current(db, existing_section)
+    if "source_urls" in update_data:
+        update_data["url_scrape_details"] = None
     section = DealService.update_section(db, section_id, update_data)
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
@@ -177,7 +190,7 @@ def list_narrative_versions(
     db: Session = Depends(get_db),
 ):
     """List generated and edited versions for one narrative."""
-    section = DealService.get_section(db, section_id)
+    section = _get_deal_section(db, deal_id, section_id)
     if not section or section.deal_id != deal_id:
         raise HTTPException(status_code=404, detail="Section not found")
     return NarrativeVersionService.list_for_section(db, deal_id, section_id)
@@ -236,7 +249,9 @@ async def generate_narrative(
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
         
-    if deal.library_sync_status == "syncing":
+    if deal.library_sync_status == "syncing" and not (
+        deal.company_mistral_library_id or deal.mistral_library_id
+    ):
         raise HTTPException(
             status_code=409, 
             detail="Library sync in progress. Please wait until documents are fully uploaded."
@@ -287,7 +302,9 @@ def start_draft_all_job(
     deal = DealService.get_deal(db, deal_id)
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
-    if deal.library_sync_status == "syncing":
+    if deal.library_sync_status == "syncing" and not (
+        deal.company_mistral_library_id or deal.mistral_library_id
+    ):
         raise HTTPException(
             status_code=409,
             detail="Library sync is still in progress.",
@@ -355,7 +372,9 @@ async def draft_all_sections(deal_id: str, db: Session = Depends(get_db)):
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
         
-    if deal.library_sync_status == "syncing":
+    if deal.library_sync_status == "syncing" and not (
+        deal.company_mistral_library_id or deal.mistral_library_id
+    ):
         raise HTTPException(
             status_code=409, 
             detail="Library sync in progress. Please wait until documents are fully uploaded."
@@ -400,7 +419,7 @@ async def moderate_section(
     Returns moderation status and flagged categories.
     """
     import json as _json
-    section = DealService.get_section(db, section_id)
+    section = _get_deal_section(db, deal_id, section_id)
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
 
@@ -458,7 +477,7 @@ async def upload_template(
     The template content is extracted and stored as markdown text
     that the AI agent will follow when generating the narrative.
     """
-    section = DealService.get_section(db, section_id)
+    section = _get_deal_section(db, deal_id, section_id)
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
 
@@ -502,7 +521,7 @@ def delete_template(
     db: Session = Depends(get_db),
 ):
     """Remove the output template from a section."""
-    section = DealService.get_section(db, section_id)
+    section = _get_deal_section(db, deal_id, section_id)
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
 

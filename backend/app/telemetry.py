@@ -142,6 +142,39 @@ def is_telemetry_enabled() -> bool:
     return _telemetry_configured
 
 
+def extract_usage_metrics(response) -> dict[str, int]:
+    """Extract token usage across Mistral chat, agent, and conversation responses."""
+    usage = getattr(response, "usage", None) or getattr(response, "usage_info", None)
+    if usage is None:
+        return {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+    def value(*names: str) -> int:
+        for name in names:
+            raw = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+            if raw is not None:
+                try:
+                    return int(raw)
+                except (TypeError, ValueError):
+                    continue
+        return 0
+
+    input_tokens = value("prompt_tokens", "input_tokens")
+    output_tokens = value("completion_tokens", "output_tokens")
+    total_tokens = value("total_tokens") or input_tokens + output_tokens
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+    }
+
+
+def estimate_text_tokens(text: str) -> int:
+    """Estimate tokens for APIs, such as moderation, that omit usage metadata."""
+    if not text:
+        return 0
+    return max(1, (len(text.encode("utf-8")) + 3) // 4)
+
+
 # ── Custom Attribute Helpers ─────────────────────────────────────────
 # These helpers ensure consistent attribute naming across all services.
 # All custom attributes use the "credit_dossier." prefix for Mistral dashboard filtering.

@@ -1,6 +1,6 @@
 # Run Credit Dossier locally
 
-Run PostgreSQL first and then open three PowerShell terminals from the repository
+Run PostgreSQL first and then open four PowerShell terminals from the repository
 root.
 
 The services use separate PostgreSQL databases:
@@ -34,7 +34,7 @@ Backend API documentation:
 http://127.0.0.1:8000/docs
 ```
 
-## Terminal 3 — Frontend
+## Terminal 3 — Frontend (without Manufacture Data)
 
 ```powershell
 cd frontend
@@ -46,6 +46,23 @@ Open the application at:
 ```text
 http://localhost:8080
 ```
+
+## Terminal 4 — Frontend 2 (with Manufacture Data)
+
+```powershell
+cd frontend_2
+npm run dev
+```
+
+Open the second application at:
+
+```text
+http://localhost:8081
+```
+
+Both frontends use the same backend at `http://localhost:8000`. Therefore,
+clients, deals, narratives, versions, and edits created in either frontend are
+immediately available in the other frontend for the same signed-in user.
 
 ## First-time dependency installation
 
@@ -62,6 +79,8 @@ Frontend:
 ```powershell
 cd frontend
 npm install
+cd ..\frontend_2
+npm install
 ```
 
 ## Verify the local MCP
@@ -77,7 +96,7 @@ The `.env` files contain secrets and are ignored by Git. Do not commit them.
 
 ## Manufacture a detailed test company
 
-Use the **Manufacture Data** page in the frontend, or run:
+Use the **Manufacture Data** page in `frontend_2`, or run:
 
 ```powershell
 cd mcp
@@ -90,3 +109,6 @@ cd mcp
 The Mistral path makes multiple detailed-generation calls, so a complete
 17-document run can take several minutes. Running the same company again
 refreshes older PDFs and all 16 PostgreSQL datasets.
+
+
+Test link (pqrs client ,ration analysis) - [dpaste.com/6E6QD7PTX](https://dpaste.com/6E6QD7PTX)

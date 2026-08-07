@@ -16,6 +16,8 @@ from app.services.deal_service import DealService
 from app.services.mistral_library_service import MistralLibraryService
 from app.services.mcp_service import MCPClientService
 from app.services.library_sync_service import LibrarySyncService
+from app.auth import get_current_user, require_deal_owner, require_relationship_manager
+from app.models.user import User
 import httpx
 import logging
 
@@ -29,9 +31,10 @@ def list_deals(
     status: str | None = Query(None, description="Filter by status"),
     search: str | None = Query(None, description="Search by customer name"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """List all deals with optional status and search filters."""
-    deals = DealService.list_deals(db, status=status, search=search)
+    deals = DealService.list_deals(db, current_user, status=status, search=search)
     result = []
     for deal in deals:
         mandatory = [s for s in deal.sections if not s.optional]
@@ -65,7 +68,7 @@ def list_deals(
     return result
 
 
-@router.get("/{deal_id}", response_model=DealResponse)
+@router.get("/{deal_id}", response_model=DealResponse, dependencies=[Depends(require_deal_owner)])
 def get_deal(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Get a single deal with all sections, audit entries, and versions."""
     deal = DealService.get_deal(db, deal_id)
@@ -80,7 +83,7 @@ def get_deal(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depe
     return deal
 
 
-@router.post("/{deal_id}/library/sync", status_code=202)
+@router.post("/{deal_id}/library/sync", status_code=202, dependencies=[Depends(require_deal_owner)])
 def sync_mcp_documents(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Refresh direct references to the company's Mistral Library."""
     deal = DealService.get_deal(db, deal_id)
@@ -90,7 +93,7 @@ def sync_mcp_documents(deal_id: str, background_tasks: BackgroundTasks, db: Sess
     background_tasks.add_task(LibrarySyncService.sync_mcp_documents, deal.id)
     return {"message": "Company library refresh started", "status": "syncing"}
 
-@router.get("/{deal_id}/library/sync-status")
+@router.get("/{deal_id}/library/sync-status", dependencies=[Depends(require_deal_owner)])
 def get_library_sync_status(deal_id: str, db: Session = Depends(get_db)):
     """Get the current sync status and timeline of logs."""
     deal = DealService.get_deal(db, deal_id)
@@ -119,9 +122,9 @@ def get_library_sync_status(deal_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("", response_model=DealResponse, status_code=201)
-def create_deal(data: DealCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def create_deal(data: DealCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: User = Depends(require_relationship_manager)):
     """Create a new deal with 16 default sections."""
-    deal = DealService.create_deal(db, data.model_dump())
+    deal = DealService.create_deal(db, data.model_dump(), current_user.id)
     
     background_tasks.add_task(LibrarySyncService.sync_mcp_documents, deal.id)
     
@@ -130,7 +133,7 @@ def create_deal(data: DealCreate, background_tasks: BackgroundTasks, db: Session
     return full_deal
 
 
-@router.patch("/{deal_id}", response_model=DealResponse)
+@router.patch("/{deal_id}", response_model=DealResponse, dependencies=[Depends(require_deal_owner)])
 def update_deal(deal_id: str, data: DealUpdate, db: Session = Depends(get_db)):
     """Update deal metadata."""
     deal = DealService.update_deal(db, deal_id, data.model_dump(exclude_unset=True))
@@ -140,7 +143,7 @@ def update_deal(deal_id: str, data: DealUpdate, db: Session = Depends(get_db)):
     return full_deal
 
 
-@router.post("/{deal_id}/theme/extract", response_model=DealResponse)
+@router.post("/{deal_id}/theme/extract", response_model=DealResponse, dependencies=[Depends(require_deal_owner)])
 async def extract_theme_from_document(deal_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
     """Upload a document (like an Annual Report) to extract and apply the brand theme."""
     deal = DealService.get_deal(db, deal_id)
@@ -178,7 +181,7 @@ async def extract_theme_from_document(deal_id: str, file: UploadFile = File(...)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/{deal_id}", status_code=204)
+@router.delete("/{deal_id}", status_code=204, dependencies=[Depends(require_deal_owner)])
 def delete_deal(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Delete a deal and all related data, including the Mistral library."""
     deal = DealService.get_deal(db, deal_id)

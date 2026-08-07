@@ -197,6 +197,8 @@ class ManufacturingAgent:
                 "Create 5 to 8 substantive sections specific to this document type.",
                 "Each section must contain credit-relevant detail, not generic filler.",
                 "Include at least three useful tables where appropriate.",
+                "Keep each table to at most 7 columns and every table cell under 80 words.",
+                "Put long explanations in paragraphs instead of table cells.",
                 "Reconcile identifiers, counterparties and financial values with borrowerContext.",
                 "Use previousDocuments to prevent contradictions.",
                 "Clearly state that the document contains synthetic testing data.",

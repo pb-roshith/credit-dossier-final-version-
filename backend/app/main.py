@@ -67,6 +67,10 @@ async def lifespan(app: FastAPI):
     auth_db = SessionLocal()
     try:
         seed_initial_users(auth_db)
+        from app.migrations import backfill_deal_owners
+        fallback_user = auth_db.query(User).order_by(User.created_at).first()
+        if fallback_user:
+            backfill_deal_owners(engine, fallback_user.id)
         LibrarySyncService.reset_interrupted_syncs(auth_db)
     finally:
         auth_db.close()

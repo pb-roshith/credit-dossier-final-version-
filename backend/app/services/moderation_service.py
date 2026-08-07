@@ -12,11 +12,18 @@ Categories checked:
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.config import settings
-from app.telemetry import get_tracer, set_span_attributes, set_gen_ai_attributes
+from app.telemetry import (
+    extract_usage_metrics,
+    estimate_text_tokens,
+    get_tracer,
+    set_gen_ai_attributes,
+    set_span_attributes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +43,20 @@ class ModerationResult:
     is_safe: bool
     flagged_categories: list[str] = field(default_factory=list)
     details: dict[str, Any] = field(default_factory=dict)
+    latency_ms: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "is_safe": self.is_safe,
             "flagged_categories": self.flagged_categories,
             "details": self.details,
+            "latency_ms": self.latency_ms,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "total_tokens": self.total_tokens,
         }
 
 
@@ -60,6 +75,7 @@ class ModerationService:
 
         client = _get_client()
         tracer = get_tracer()
+        started_at = time.perf_counter()
 
         # Start telemetry span
         span_ctx = None
@@ -81,6 +97,12 @@ class ModerationService:
                 model=MODERATION_MODEL,
                 inputs=[text],
             )
+            usage = extract_usage_metrics(response)
+            if usage["input_tokens"] == 0:
+                usage["input_tokens"] = estimate_text_tokens(text)
+            if usage["total_tokens"] == 0:
+                usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
+            latency_ms = (time.perf_counter() - started_at) * 1000
 
             # response.results is a list (one per input)
             if not response.results:
@@ -145,6 +167,8 @@ class ModerationService:
                 is_safe=is_safe,
                 flagged_categories=flagged_categories,
                 details=details,
+                latency_ms=latency_ms,
+                **usage,
             )
 
         except Exception as e:
@@ -158,6 +182,7 @@ class ModerationService:
             return ModerationResult(
                 is_safe=True,
                 details={"error": str(e)},
+                latency_ms=(time.perf_counter() - started_at) * 1000,
             )
 
     @staticmethod
@@ -174,10 +199,16 @@ class ModerationService:
         """
         all_flagged: list[str] = []
         all_details: dict[str, Any] = {}
+        latency_ms = 0.0
+        input_tokens = output_tokens = total_tokens = 0
 
         # Check custom instructions
         if custom_instructions and custom_instructions.strip():
             result = await ModerationService.moderate_text(custom_instructions)
+            latency_ms += result.latency_ms
+            input_tokens += result.input_tokens
+            output_tokens += result.output_tokens
+            total_tokens += result.total_tokens
             if not result.is_safe:
                 all_flagged.extend(result.flagged_categories)
             all_details["custom_instructions"] = {
@@ -189,6 +220,10 @@ class ModerationService:
         # Check output template
         if output_template and output_template.strip():
             result = await ModerationService.moderate_text(output_template)
+            latency_ms += result.latency_ms
+            input_tokens += result.input_tokens
+            output_tokens += result.output_tokens
+            total_tokens += result.total_tokens
             if not result.is_safe:
                 # Avoid duplicate categories
                 for cat in result.flagged_categories:
@@ -206,4 +241,8 @@ class ModerationService:
             is_safe=is_safe,
             flagged_categories=all_flagged,
             details=all_details,
+            latency_ms=latency_ms,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
         )

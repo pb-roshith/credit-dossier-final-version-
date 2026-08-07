@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from app.database import SessionLocal
 from app.models.deal import Deal
 from app.models.library_sync_log import LibrarySyncLog
+from app.models.user import User
 from app.services.deal_service import DealService
 from app.services.mcp_service import MCPClientService
 from app.services.mistral_library_service import MistralLibraryService
@@ -67,7 +68,12 @@ class LibrarySyncService:
 
             existing_library_id = deal.company_mistral_library_id
             existing_document_count = deal.company_document_count
-            details = await MCPClientService.get_company_details(deal.customer)
+            owner = db.get(User, deal.owner_user_id)
+            if not owner:
+                raise ValueError("The deal owner no longer exists.")
+            details = await MCPClientService.get_company_details(
+                deal.customer, owner.user_id
+            )
             company_library_id = details.get("mistral_library_id")
 
             # As soon as the source library is known, generation is safe. Document
@@ -79,7 +85,9 @@ class LibrarySyncService:
                 deal.library_sync_status = "ready"
                 db.commit()
 
-            documents = await MCPClientService.get_documents(deal.customer)
+            documents = await MCPClientService.get_documents(
+                deal.customer, owner.user_id
+            )
             if not company_library_id:
                 company_library_id = next(
                     (
@@ -149,10 +157,6 @@ class LibrarySyncService:
             db.commit()
 
             await MistralLibraryService.remove_legacy_mcp_copies(db, deal)
-            await MistralLibraryService.sync_agents_to_libraries(
-                db,
-                MistralLibraryService.library_ids_for_deal(deal),
-            )
             logger.info(
                 "Linked %s company documents from Mistral Library %s to deal %s",
                 len(documents),

@@ -25,6 +25,9 @@ class Deal(Base):
     __tablename__ = "deals"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    owner_user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id"), nullable=False, index=True
+    )
     customer: Mapped[str] = mapped_column(String(256), nullable=False)
     customer_type: Mapped[str] = mapped_column(String(32), nullable=False, default="Existing")
     industry: Mapped[str] = mapped_column(String(128), nullable=False, default="")
@@ -124,6 +127,9 @@ class Section(Base):
     # Moderation — guardrail status for user-provided inputs
     moderation_status: Mapped[str | None] = mapped_column(String(16), nullable=True)  # "safe", "flagged", or None
     moderation_details: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string
+    observability_details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_urls: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    url_scrape_details: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships
     deal: Mapped["Deal"] = relationship(back_populates="sections")
@@ -155,6 +161,9 @@ class Version(Base):
     deal_id: Mapped[str] = mapped_column(ForeignKey("deals.id", ondelete="CASCADE"), nullable=False)
     notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="submitted")
+    review_comments: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     deal: Mapped["Deal"] = relationship(back_populates="versions")

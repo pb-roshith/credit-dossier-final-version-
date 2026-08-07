@@ -21,7 +21,12 @@ from typing import Any
 
 from app.config import settings
 from app.models.deal import Deal, Section
-from app.telemetry import get_tracer, set_span_attributes, set_gen_ai_attributes
+from app.telemetry import (
+    extract_usage_metrics,
+    get_tracer,
+    set_gen_ai_attributes,
+    set_span_attributes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +43,9 @@ class OrchestrationResult:
     gaps: list[str] = field(default_factory=list)
     strategy_summary: str = ""
     elapsed_ms: float = 0.0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
 
     def to_strategy_text(self) -> str:
         """
@@ -324,6 +332,10 @@ class OrchestrationService:
             # Parse JSON response
             result = OrchestrationService._parse_orchestration_response(content)
             result.elapsed_ms = (time.time() - start) * 1000
+            usage = extract_usage_metrics(response)
+            result.input_tokens = usage["input_tokens"]
+            result.output_tokens = usage["output_tokens"]
+            result.total_tokens = usage["total_tokens"]
 
             doc_names = [doc.get("title", "Unknown") for doc in result.recommended_documents]
 
@@ -337,6 +349,9 @@ class OrchestrationService:
                         confidence=str(result.confidence),
                         documents_recommended=str(len(result.recommended_documents)),
                         elapsed_ms=str(round(result.elapsed_ms)),
+                        input_tokens=str(result.input_tokens),
+                        output_tokens=str(result.output_tokens),
+                        total_tokens=str(result.total_tokens),
                     )
                     set_gen_ai_attributes(span, system="mistral")
 

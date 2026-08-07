@@ -5,6 +5,7 @@ Pydantic schemas for Deal, Section, AuditEntry, and Version.
 import json
 from datetime import datetime
 from typing import Optional
+from urllib.parse import urlsplit
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -96,12 +97,15 @@ class SectionResponse(BaseModel):
     orchestration_strategy: Optional[str] = None
     moderation_status: Optional[str] = None
     moderation_details: Optional[dict] = None
+    observability_details: Optional[dict] = None
+    source_urls: list[str] = []
+    url_scrape_details: Optional[list[dict]] = None
     uploads: list[UploadBrief] = []  # Legacy
     document_links: list[SectionDocumentLinkResponse] = []  # New
 
     model_config = {"from_attributes": True}
 
-    @field_validator("accuracy_details", "moderation_details", mode="before")
+    @field_validator("accuracy_details", "moderation_details", "observability_details", mode="before")
     @classmethod
     def parse_json_details(cls, v):
         """Parse JSON string fields (DB storage) to dict."""
@@ -112,13 +116,45 @@ class SectionResponse(BaseModel):
                 return None
         return v
 
+    @field_validator("source_urls", "url_scrape_details", mode="before")
+    @classmethod
+    def parse_json_lists(cls, v):
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                return parsed if isinstance(parsed, list) else []
+            except (json.JSONDecodeError, TypeError):
+                return []
+        return v or []
+
 
 class SectionUpdate(BaseModel):
+    sources: Optional[str] = None
     expected_output: Optional[str] = None
     custom_instructions: Optional[str] = None
     output_template: Optional[str] = None
     generated_content: Optional[str] = None
     state: Optional[str] = None
+    source_urls: Optional[list[str]] = None
+
+    @field_validator("source_urls")
+    @classmethod
+    def validate_source_urls(cls, value):
+        if value is None:
+            return value
+        if len(value) > 10:
+            raise ValueError("A section can contain at most 10 URLs.")
+        normalized: list[str] = []
+        for raw_url in value:
+            url = raw_url.strip()
+            parsed = urlsplit(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise ValueError(f"Invalid HTTP/HTTPS URL: {raw_url}")
+            if len(url) > 2048:
+                raise ValueError("A URL cannot exceed 2048 characters.")
+            if url not in normalized:
+                normalized.append(url)
+        return normalized
 
 
 # ── Audit Entry ─────────────────────────────────────────────────
@@ -137,10 +173,17 @@ class VersionCreate(BaseModel):
     notes: str = ""
 
 
+class VersionReviewRequest(BaseModel):
+    comments: str = Field(default="", max_length=4000)
+
+
 class VersionResponse(BaseModel):
     id: str
     notes: str
     status: str
+    review_comments: Optional[str] = None
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

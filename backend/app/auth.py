@@ -6,9 +6,10 @@ import base64
 import hashlib
 import hmac
 import secrets
+import re
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Cookie, Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -16,8 +17,39 @@ from app.models.user import AuthSession, User
 
 
 SESSION_COOKIE = "credit_dossier_session"
+FRONTEND_SESSION_COOKIES = {
+    "frontend": "credit_dossier_session_frontend",
+    "frontend_2": "credit_dossier_session_frontend_2",
+}
+FRONTEND_HEADER = "x-credit-dossier-frontend"
 SESSION_HOURS = 12
 PBKDF2_ITERATIONS = 600_000
+ALLOWED_ROLES = {"relationship_manager", "credit_analyst"}
+
+
+def session_cookie_name(request: Request) -> str:
+    """Use independent cookies for the two localhost frontend applications."""
+    frontend_id = request.headers.get(FRONTEND_HEADER, "").strip().lower()
+    return FRONTEND_SESSION_COOKIES.get(frontend_id, SESSION_COOKIE)
+
+
+def validate_password_strength(password: str, user_id: str | None = None) -> None:
+    """Enforce the password policy for registration and password changes."""
+    requirements = []
+    if len(password) < 12:
+        requirements.append("at least 12 characters")
+    if not re.search(r"[A-Z]", password):
+        requirements.append("one uppercase letter")
+    if not re.search(r"[a-z]", password):
+        requirements.append("one lowercase letter")
+    if not re.search(r"\d", password):
+        requirements.append("one number")
+    if not re.search(r"[^A-Za-z0-9]", password):
+        requirements.append("one special character")
+    if user_id and user_id.lower() in password.lower():
+        requirements.append("a password that does not contain the user ID")
+    if requirements:
+        raise ValueError("Password must contain " + ", ".join(requirements) + ".")
 
 
 def hash_password(password: str) -> str:
@@ -60,12 +92,20 @@ def create_session(db: Session, user: User) -> tuple[str, AuthSession]:
 
 
 def seed_initial_users(db: Session) -> None:
-    """Create the configured local admin and normal accounts once."""
+    """Create initial role accounts and migrate legacy role names."""
     from app.config import settings
 
     accounts = (
-        (settings.INITIAL_ADMIN_USER_ID, settings.INITIAL_ADMIN_PASSWORD, "admin"),
-        (settings.INITIAL_NORMAL_USER_ID, settings.INITIAL_NORMAL_PASSWORD, "normal"),
+        (
+            settings.INITIAL_RELATIONSHIP_MANAGER_USER_ID,
+            settings.INITIAL_RELATIONSHIP_MANAGER_PASSWORD,
+            "relationship_manager",
+        ),
+        (
+            settings.INITIAL_CREDIT_ANALYST_USER_ID,
+            settings.INITIAL_CREDIT_ANALYST_PASSWORD,
+            "credit_analyst",
+        ),
     )
     changed = False
     for configured_user_id, password, role in accounts:
@@ -74,8 +114,19 @@ def seed_initial_users(db: Session) -> None:
             continue
         if db.query(User).filter(User.user_id == user_id).first():
             continue
+        validate_password_strength(password, user_id)
         db.add(User(user_id=user_id, password_hash=hash_password(password), role=role))
         changed = True
+    changed = bool(
+        db.query(User).filter(User.role == "admin").update(
+            {User.role: "relationship_manager"}, synchronize_session=False
+        )
+    ) or changed
+    changed = bool(
+        db.query(User).filter(User.role == "normal").update(
+            {User.role: "credit_analyst"}, synchronize_session=False
+        )
+    ) or changed
     if changed:
         db.commit()
 
@@ -88,9 +139,10 @@ def _unauthorized(detail: str = "Please sign in to continue.") -> HTTPException:
 
 
 def get_current_user(
-    session_token: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+    request: Request,
     db: Session = Depends(get_db),
 ) -> User:
+    session_token = request.cookies.get(session_cookie_name(request))
     if not session_token:
         raise _unauthorized()
 
@@ -115,10 +167,42 @@ def get_current_user(
     return user
 
 
-def require_admin(current_user: User = Depends(get_current_user)) -> User:
-    if current_user.role != "admin":
+def require_deal_owner(
+    deal_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Allow an RM to access owned deals and a Credit Analyst to access all deals."""
+    from app.models.deal import Deal
+
+    query = db.query(Deal).filter(Deal.id == deal_id)
+    if current_user.role == "relationship_manager":
+        query = query.filter(Deal.owner_user_id == current_user.id)
+    elif current_user.role != "credit_analyst":
+        raise HTTPException(status_code=403, detail="Your role cannot access deals.")
+    deal = query.first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found.")
+    return deal
+
+
+def require_relationship_manager(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    if current_user.role != "relationship_manager":
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Administrator access is required for Manufacture Data.",
+            status_code=403,
+            detail="Only Relationship Managers can create or submit deals.",
+        )
+    return current_user
+
+
+def require_credit_analyst(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    if current_user.role != "credit_analyst":
+        raise HTTPException(
+            status_code=403,
+            detail="Only Credit Analysts can approve deals.",
         )
     return current_user

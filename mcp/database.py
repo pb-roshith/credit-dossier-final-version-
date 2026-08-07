@@ -51,8 +51,9 @@ def init_db() -> None:
             """
             CREATE TABLE IF NOT EXISTS mcp_companies (
                 id BIGSERIAL PRIMARY KEY,
-                name TEXT NOT NULL UNIQUE,
-                normalized_name TEXT NOT NULL UNIQUE,
+                owner_user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                normalized_name TEXT NOT NULL,
                 industry TEXT NOT NULL,
                 geography TEXT NOT NULL,
                 segment TEXT NOT NULL DEFAULT 'Mid Corporate',
@@ -64,6 +65,10 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute("ALTER TABLE mcp_companies ADD COLUMN IF NOT EXISTS owner_user_id TEXT NOT NULL DEFAULT 'admin'")
+        conn.execute("ALTER TABLE mcp_companies DROP CONSTRAINT IF EXISTS mcp_companies_name_key")
+        conn.execute("ALTER TABLE mcp_companies DROP CONSTRAINT IF EXISTS mcp_companies_normalized_name_key")
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_mcp_company_owner_name ON mcp_companies (owner_user_id, normalized_name)")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS mcp_documents (
@@ -82,54 +87,8 @@ def init_db() -> None:
             )
             """
         )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS mcp_client_registry (
-                id BIGSERIAL PRIMARY KEY,
-                legal_name TEXT NOT NULL UNIQUE,
-                normalized_name TEXT NOT NULL UNIQUE,
-                industry TEXT NOT NULL,
-                geography TEXT NOT NULL,
-                mistral_library_id TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE OR REPLACE FUNCTION sync_mcp_client_normalized_name()
-            RETURNS TRIGGER AS $$
-            BEGIN
-                NEW.normalized_name := lower(
-                    regexp_replace(btrim(NEW.legal_name), '\\s+', ' ', 'g')
-                );
-                RETURN NEW;
-            END;
-            $$ LANGUAGE plpgsql
-            """
-        )
-        conn.execute(
-            """
-            DROP TRIGGER IF EXISTS mcp_client_normalized_name_trigger
-            ON mcp_client_registry
-            """
-        )
-        conn.execute(
-            """
-            CREATE TRIGGER mcp_client_normalized_name_trigger
-            BEFORE INSERT OR UPDATE OF legal_name
-            ON mcp_client_registry
-            FOR EACH ROW
-            EXECUTE FUNCTION sync_mcp_client_normalized_name()
-            """
-        )
-        conn.execute(
-            """
-            UPDATE mcp_client_registry
-            SET legal_name = legal_name
-            """
-        )
+        conn.execute("DROP TABLE IF EXISTS mcp_client_registry")
+        conn.execute("DROP FUNCTION IF EXISTS sync_mcp_client_normalized_name()")
         conn.execute(
             """
             ALTER TABLE mcp_documents
@@ -180,6 +139,7 @@ def _text_value(value: object) -> str | None:
 
 
 def upsert_company(
+    owner_user_id: str,
     name: str,
     industry: str,
     geography: str,
@@ -189,11 +149,11 @@ def upsert_company(
         row = conn.execute(
             """
             INSERT INTO mcp_companies (
-                name, normalized_name, industry, geography, segment,
+                owner_user_id, name, normalized_name, industry, geography, segment,
                 kyc_status, context
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (normalized_name) DO UPDATE SET
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (owner_user_id, normalized_name) DO UPDATE SET
                 name = EXCLUDED.name,
                 industry = EXCLUDED.industry,
                 geography = EXCLUDED.geography,
@@ -204,6 +164,7 @@ def upsert_company(
             RETURNING *
             """,
             (
+                owner_user_id,
                 name,
                 normalize_company_name(name),
                 industry,
@@ -217,19 +178,19 @@ def upsert_company(
         return dict(row)
 
 
-def get_company(name: str) -> dict | None:
+def get_company(owner_user_id: str, name: str) -> dict | None:
     with connection() as conn:
         row = conn.execute(
             """
             SELECT * FROM mcp_companies
-            WHERE normalized_name = %s
+            WHERE owner_user_id = %s AND normalized_name = %s
             """,
-            (normalize_company_name(name),),
+            (owner_user_id, normalize_company_name(name)),
         ).fetchone()
         return dict(row) if row else None
 
 
-def list_companies() -> list[dict]:
+def list_companies(owner_user_id: str) -> list[dict]:
     with connection() as conn:
         rows = conn.execute(
             """
@@ -238,80 +199,11 @@ def list_companies() -> list[dict]:
                    COUNT(d.id)::INTEGER AS document_count
             FROM mcp_companies c
             LEFT JOIN mcp_documents d ON d.company_id = c.id
+            WHERE c.owner_user_id = %s
             GROUP BY c.id
             ORDER BY c.name
-            """
-        ).fetchall()
-        return [dict(row) for row in rows]
-
-
-def upsert_registered_client(
-    legal_name: str,
-    industry: str,
-    geography: str,
-    mistral_library_id: str,
-) -> dict:
-    """Register a real-world client whose documents already exist in Mistral."""
-    values = {
-        "legal_name": legal_name.strip(),
-        "industry": industry.strip(),
-        "geography": geography.strip(),
-        "mistral_library_id": mistral_library_id.strip(),
-    }
-    missing = [name for name, value in values.items() if not value]
-    if missing:
-        raise ValueError(f"Required values are missing: {', '.join(missing)}")
-    with connection() as conn:
-        row = conn.execute(
-            """
-            INSERT INTO mcp_client_registry (
-                legal_name, normalized_name, industry, geography,
-                mistral_library_id
-            )
-            VALUES (%s, %s, %s, %s, %s)
-            ON CONFLICT (normalized_name) DO UPDATE SET
-                legal_name = EXCLUDED.legal_name,
-                industry = EXCLUDED.industry,
-                geography = EXCLUDED.geography,
-                mistral_library_id = EXCLUDED.mistral_library_id,
-                updated_at = NOW()
-            RETURNING *
             """,
-            (
-                values["legal_name"],
-                normalize_company_name(values["legal_name"]),
-                values["industry"],
-                values["geography"],
-                values["mistral_library_id"],
-            ),
-        ).fetchone()
-        conn.commit()
-        return dict(row)
-
-
-def get_registered_client(legal_name: str) -> dict | None:
-    normalized_name = normalize_company_name(legal_name)
-    with connection() as conn:
-        row = conn.execute(
-            """
-            SELECT * FROM mcp_client_registry
-            WHERE normalized_name = %s
-               OR lower(regexp_replace(btrim(legal_name), '\\s+', ' ', 'g')) = %s
-            """,
-            (normalized_name, normalized_name),
-        ).fetchone()
-        return dict(row) if row else None
-
-
-def list_registered_clients() -> list[dict]:
-    with connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT legal_name, industry, geography, mistral_library_id,
-                   created_at, updated_at
-            FROM mcp_client_registry
-            ORDER BY legal_name
-            """
+            (owner_user_id,),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -374,7 +266,7 @@ def upsert_document(
         conn.commit()
 
 
-def list_documents(company_name: str) -> list[dict]:
+def list_documents(owner_user_id: str, company_name: str) -> list[dict]:
     with connection() as conn:
         rows = conn.execute(
             """
@@ -384,16 +276,16 @@ def list_documents(company_name: str) -> list[dict]:
                    c.mistral_library_id
             FROM mcp_documents d
             JOIN mcp_companies c ON c.id = d.company_id
-            WHERE c.normalized_name = %s
+            WHERE c.owner_user_id = %s AND c.normalized_name = %s
             ORDER BY d.document_number
             """,
-            (normalize_company_name(company_name),),
+            (owner_user_id, normalize_company_name(company_name)),
         ).fetchall()
         return [dict(row) for row in rows]
 
 
-def get_document(company_name: str, document_name: str) -> dict | None:
-    documents = list_documents(company_name)
+def get_document(owner_user_id: str, company_name: str, document_name: str) -> dict | None:
+    documents = list_documents(owner_user_id, company_name)
     return next(
         (doc for doc in documents if doc["document_name"] == document_name),
         None,
@@ -487,10 +379,10 @@ def seed_credit_tables(
     return inserted
 
 
-def describe_table(company_name: str, table_name: str) -> dict:
+def describe_table(owner_user_id: str, company_name: str, table_name: str) -> dict:
     if table_name not in TABLE_NAMES:
         raise ValueError("Unknown credit intelligence table.")
-    company = get_company(company_name)
+    company = get_company(owner_user_id, company_name)
     if not company:
         raise ValueError(f'Company "{company_name}" is not configured.')
     schema_name, bare_name = table_name.split(".", 1)
@@ -518,13 +410,14 @@ def describe_table(company_name: str, table_name: str) -> dict:
 
 
 def fetch_table_rows(
+    owner_user_id: str,
     company_name: str,
     table_name: str,
     limit: int = 20,
 ) -> list[dict]:
     if table_name not in TABLE_NAMES:
         raise ValueError("Unknown credit intelligence table.")
-    company = get_company(company_name)
+    company = get_company(owner_user_id, company_name)
     if not company:
         raise ValueError(f'Company "{company_name}" is not configured.')
     schema_name, bare_name = table_name.split(".", 1)
@@ -556,11 +449,11 @@ def fetch_table_rows(
     ]
 
 
-def delete_company(company_name: str) -> bool:
+def delete_company(owner_user_id: str, company_name: str) -> bool:
     with connection() as conn:
         result = conn.execute(
-            "DELETE FROM mcp_companies WHERE normalized_name = %s",
-            (normalize_company_name(company_name),),
+            "DELETE FROM mcp_companies WHERE owner_user_id = %s AND normalized_name = %s",
+            (owner_user_id, normalize_company_name(company_name)),
         )
         conn.commit()
         return result.rowcount > 0

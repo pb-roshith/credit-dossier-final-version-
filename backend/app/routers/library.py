@@ -13,10 +13,11 @@ from app.models.deal import Deal
 from app.models.library_file import LibraryFile
 from app.schemas.deal import LibraryFileResponse
 from app.services.mistral_library_service import MistralLibraryService
+from app.auth import require_deal_owner
 
 import httpx
 
-router = APIRouter(prefix="/api/deals/{deal_id}/library", tags=["library"])
+router = APIRouter(prefix="/api/deals/{deal_id}/library", tags=["library"], dependencies=[Depends(require_deal_owner)])
 
 
 @router.get("", response_model=list[LibraryFileResponse])
@@ -166,11 +167,6 @@ async def upload_to_library(
         )
 
     # ── Sync all agents to this deal's library after upload ──
-    await MistralLibraryService.sync_agents_to_libraries(
-        db,
-        MistralLibraryService.library_ids_for_deal(deal),
-    )
-
     return lib_file
 
 

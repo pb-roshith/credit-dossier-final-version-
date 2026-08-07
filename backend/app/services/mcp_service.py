@@ -214,12 +214,12 @@ class MCPClientService:
     # ── Core Tool Calls ────────────────────────────────────────
 
     @classmethod
-    async def list_companies(cls) -> List[Dict[str, Any]]:
+    async def list_companies(cls, owner_user_id: str) -> List[Dict[str, Any]]:
         if cls._is_circuit_open():
             logger.warning("MCP circuit breaker is OPEN. Skipping list_companies.")
             return []
         try:
-            result = await cls._call_tool("list_companies", {})
+            result = await cls._call_tool("list_companies", {"owner_user_id": owner_user_id})
             if result and result.content:
                 text = result.content[0].text
                 data = json.loads(text)
@@ -232,12 +232,12 @@ class MCPClientService:
             return []
 
     @classmethod
-    async def get_documents(cls, company_name: str) -> List[Dict[str, Any]]:
+    async def get_documents(cls, company_name: str, owner_user_id: str) -> List[Dict[str, Any]]:
         if cls._is_circuit_open():
             return []
         try:
             result = await cls._call_tool(
-                "retrieve_company_documents", {"company_name": company_name}
+                "retrieve_company_documents", {"company_name": company_name, "owner_user_id": owner_user_id}
             )
             if result and result.content:
                 text = result.content[0].text
@@ -251,12 +251,12 @@ class MCPClientService:
             return []
 
     @classmethod
-    async def get_company_details(cls, company_name: str) -> Dict[str, Any]:
+    async def get_company_details(cls, company_name: str, owner_user_id: str) -> Dict[str, Any]:
         if cls._is_circuit_open():
             return {}
         try:
             result = await cls._call_tool(
-                "retrieve_company_details", {"company_name": company_name}
+                "retrieve_company_details", {"company_name": company_name, "owner_user_id": owner_user_id}
             )
             if result and result.content:
                 text = result.content[0].text
@@ -267,13 +267,13 @@ class MCPClientService:
             return {}
 
     @classmethod
-    async def get_document_summaries(cls, company_name: str) -> str:
+    async def get_document_summaries(cls, company_name: str, owner_user_id: str) -> str:
         if cls._is_circuit_open():
             return "MCP circuit breaker open. Summaries temporarily unavailable."
         try:
             result = await cls._call_tool(
                 "retrieve_company_document_summaries",
-                {"company_name": company_name},
+                {"company_name": company_name, "owner_user_id": owner_user_id},
             )
             if result and result.content:
                 return result.content[0].text
@@ -289,6 +289,7 @@ class MCPClientService:
     async def get_document_summaries_cached(
         cls,
         company_name: str,
+        owner_user_id: str,
         ttl_seconds: int | None = None,
     ) -> str:
         """
@@ -305,7 +306,7 @@ class MCPClientService:
             Document summaries text (raw string from MCP)
         """
         ttl = ttl_seconds or settings.MCP_CACHE_TTL_SECONDS
-        cache_key = company_name.lower().strip()
+        cache_key = f"{owner_user_id}:{company_name.lower().strip()}"
         now = time.time()
 
         # Check cache
@@ -317,7 +318,7 @@ class MCPClientService:
 
         # Cache miss — fetch fresh
         logger.info(f"MCP summary cache MISS for '{company_name}' — fetching fresh")
-        summaries = await cls.get_document_summaries(company_name)
+        summaries = await cls.get_document_summaries(company_name, owner_user_id)
 
         # Only cache successful responses
         if not summaries.startswith(("Error:", "MCP")):
@@ -329,6 +330,7 @@ class MCPClientService:
     async def get_structured_data(
         cls,
         company_name: str,
+        owner_user_id: str,
         rows_per_table: int = 20,
     ) -> Dict[str, Any]:
         """Fetch all available PostgreSQL credit-table data in one MCP call."""
@@ -339,6 +341,7 @@ class MCPClientService:
                 "retrieve_company_structured_data",
                 {
                     "company_name": company_name,
+                    "owner_user_id": owner_user_id,
                     "rows_per_table": rows_per_table,
                 },
             )
@@ -357,27 +360,40 @@ class MCPClientService:
     async def get_structured_data_cached(
         cls,
         company_name: str,
+        owner_user_id: str,
         ttl_seconds: int | None = None,
     ) -> Dict[str, Any]:
         """Fetch structured credit data with the same TTL as PDF summaries."""
         ttl = ttl_seconds or settings.MCP_CACHE_TTL_SECONDS
-        cache_key = company_name.lower().strip()
+        cache_key = f"{owner_user_id}:{company_name.lower().strip()}"
         now = time.time()
         cached = cls._structured_cache.get(cache_key)
         if cached and now - cached[1] < ttl:
             return cached[0]
-        data = await cls.get_structured_data(company_name)
+        data = await cls.get_structured_data(company_name, owner_user_id)
         if data.get("tables"):
             cls._structured_cache[cache_key] = (data, now)
         return data
 
     @classmethod
-    def invalidate_cache(cls, company_name: str | None = None) -> None:
+    def invalidate_cache(
+        cls,
+        company_name: str | None = None,
+        owner_user_id: str | None = None,
+    ) -> None:
         """Invalidate summary cache. Pass None to clear all."""
-        if company_name:
-            cache_key = company_name.lower().strip()
+        if company_name and owner_user_id:
+            cache_key = f"{owner_user_id}:{company_name.lower().strip()}"
             cls._summary_cache.pop(cache_key, None)
             cls._structured_cache.pop(cache_key, None)
+        elif company_name:
+            suffix = f":{company_name.lower().strip()}"
+            for cache_key in list(cls._summary_cache):
+                if cache_key.endswith(suffix):
+                    cls._summary_cache.pop(cache_key, None)
+            for cache_key in list(cls._structured_cache):
+                if cache_key.endswith(suffix):
+                    cls._structured_cache.pop(cache_key, None)
         else:
             cls._summary_cache.clear()
             cls._structured_cache.clear()

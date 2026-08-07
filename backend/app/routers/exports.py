@@ -9,10 +9,11 @@ from sqlalchemy.orm import Session
 import io
 
 from app.database import get_db
+from app.auth import require_deal_owner
 from app.services.export_service import ExportService
 from app.models.deal import AuditEntry
 
-router = APIRouter(prefix="/api/deals/{deal_id}", tags=["exports"])
+router = APIRouter(prefix="/api/deals/{deal_id}", tags=["exports"], dependencies=[Depends(require_deal_owner)])
 
 
 FORMAT_CONFIG = {

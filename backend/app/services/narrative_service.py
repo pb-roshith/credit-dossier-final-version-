@@ -26,12 +26,14 @@ from sqlalchemy.orm import Session, joinedload
 from app.config import settings
 from app.models.deal import Deal, Section, AuditEntry
 from app.models.library_file import LibraryFile
+from app.models.user import User
 from app.services.mistral_library_service import MistralLibraryService
 from app.services.narrative_version_service import NarrativeVersionService
 from app.services.moderation_service import ModerationService
 from app.services.orchestration_service import OrchestrationService, OrchestrationResult
 from app.services.mcp_service import MCPClientService
-from app.telemetry import get_tracer, set_span_attributes
+from app.services.url_scraper_service import scrape_urls
+from app.telemetry import get_tracer, set_span_attributes, trace_span
 
 logger = logging.getLogger(__name__)
 
@@ -140,13 +142,47 @@ def structured_context_for_section(
     return rendered
 
 
+def source_urls_for_section(section: Section) -> list[str]:
+    if not section.source_urls:
+        return []
+    try:
+        parsed = json.loads(section.source_urls)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return [str(url) for url in parsed if isinstance(url, str)] if isinstance(parsed, list) else []
+
+
 class NarrativeService:
     """Orchestrates narrative generation using section-specific Mistral agents."""
+
+    @staticmethod
+    def _owner_key(db: Session, deal: Deal) -> str:
+        owner = db.get(User, deal.owner_user_id)
+        if not owner:
+            raise ValueError("The deal owner no longer exists.")
+        return owner.user_id
 
     # ── Single Section Generation ──────────────────────────────────
 
     @staticmethod
     async def generate_section(
+        db: Session,
+        deal_id: str,
+        section_id: str,
+        custom_instructions: str | None = None,
+    ) -> Section | None:
+        deal = db.get(Deal, deal_id)
+        if not deal:
+            return None
+        async with MistralLibraryService.agent_library_scope(
+            db, MistralLibraryService.library_ids_for_deal(deal)
+        ):
+            return await NarrativeService._generate_section_with_configured_agents(
+                db, deal_id, section_id, custom_instructions
+            )
+
+    @staticmethod
+    async def _generate_section_with_configured_agents(
         db: Session,
         deal_id: str,
         section_id: str,
@@ -196,59 +232,131 @@ class NarrativeService:
                 has_output_template=str(bool(section.output_template)),
             )
 
-        # ── Step 1: Moderation Gate ──────────────────────────────
-        if section.custom_instructions or section.output_template:
-            moderation = await ModerationService.moderate_section_inputs(
-                custom_instructions=section.custom_instructions,
-                output_template=section.output_template,
-            )
-            section.moderation_status = "safe" if moderation.is_safe else "flagged"
-            section.moderation_details = json.dumps(moderation.to_dict())
+        with trace_span(
+            "user_request",
+            deal_id=deal_id,
+            section_id=section_id,
+            section_key=section.section_key,
+        ) as request_span:
+            set_span_attributes(request_span, result="accepted")
 
-            if not moderation.is_safe:
-                db.commit()
-                db.refresh(section)
-                flagged = ", ".join(moderation.flagged_categories)
-                raise ValueError(
-                    f"Content moderation failed for '{section.title}'. "
-                    f"Flagged categories: {flagged}. "
-                    f"Please review and edit your custom instructions or output template."
+        moderation_metrics = {
+            "name": "Moderation",
+            "model": "mistral-moderation-latest",
+            "status": "skipped",
+            "latency_ms": None,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        }
+
+        # ── Step 1: Moderation Gate ──────────────────────────────
+        moderation_required = bool(section.custom_instructions or section.output_template)
+        with trace_span(
+            "moderation_gate",
+            section_id=section_id,
+            required=moderation_required,
+        ) as moderation_span:
+            if moderation_required:
+                moderation = await ModerationService.moderate_section_inputs(
+                    custom_instructions=section.custom_instructions,
+                    output_template=section.output_template,
                 )
-        else:
-            section.moderation_status = None
-            section.moderation_details = None
+                section.moderation_status = "safe" if moderation.is_safe else "flagged"
+                section.moderation_details = json.dumps(moderation.to_dict())
+                moderation_metrics.update(
+                    {
+                        "status": "success" if moderation.is_safe else "flagged",
+                        "latency_ms": round(moderation.latency_ms),
+                        "input_tokens": moderation.input_tokens,
+                        "output_tokens": moderation.output_tokens,
+                        "total_tokens": moderation.total_tokens,
+                    }
+                )
+                set_span_attributes(
+                    moderation_span,
+                    result="safe" if moderation.is_safe else "flagged",
+                )
+
+                if not moderation.is_safe:
+                    db.commit()
+                    db.refresh(section)
+                    flagged = ", ".join(moderation.flagged_categories)
+                    raise ValueError(
+                        f"Content moderation failed for '{section.title}'. "
+                        f"Flagged categories: {flagged}. "
+                        f"Please review and edit your custom instructions or output template."
+                    )
+            else:
+                section.moderation_status = None
+                section.moderation_details = None
+                set_span_attributes(moderation_span, result="skipped")
 
         # ── Step 2: Orchestration Pre-flight ─────────────────────
         orch_start = time.time()
-        orchestration = await NarrativeService._run_orchestration(
-            deal=deal,
-            section=section,
-            db=db,
-        )
+        with trace_span(
+            "orchestration_preflight",
+            deal_id=deal_id,
+            section_id=section_id,
+        ) as orchestration_span:
+            orchestration = await NarrativeService._run_orchestration(
+                deal=deal,
+                section=section,
+                db=db,
+            )
+            set_span_attributes(
+                orchestration_span,
+                result="completed",
+                confidence=orchestration.confidence,
+            )
         orch_ms = (time.time() - orch_start) * 1000
+        orchestration_metrics = {
+            "name": "Orchestration Agent",
+            "model": settings.MISTRAL_AGENT_MODEL,
+            "status": "success",
+            "latency_ms": round(orch_ms),
+            "input_tokens": orchestration.input_tokens,
+            "output_tokens": orchestration.output_tokens,
+            "total_tokens": orchestration.total_tokens,
+        }
 
         # ── Step 3: Build Section-Specific Deal Context ──────────
-        deal_context = OrchestrationService.build_deal_context_for_section(
-            deal, section.section_key
-        )
-        structured_data = await MCPClientService.get_structured_data_cached(
-            deal.customer
-        )
-        structured_context = structured_context_for_section(
-            structured_data,
-            section.section_key,
-        )
+        with trace_span(
+            "context_assembly",
+            deal_id=deal_id,
+            section_id=section_id,
+            customer=deal.customer,
+        ) as context_span:
+            deal_context = OrchestrationService.build_deal_context_for_section(
+                deal, section.section_key
+            )
+            owner_key = NarrativeService._owner_key(db, deal)
+            structured_data = await MCPClientService.get_structured_data_cached(
+                deal.customer, owner_key
+            )
+            structured_context = structured_context_for_section(
+                structured_data,
+                section.section_key,
+            )
+            web_context, url_scrape_details = await scrape_urls(
+                source_urls_for_section(section)
+            )
+            section.url_scrape_details = json.dumps(url_scrape_details)
+            set_span_attributes(
+                context_span,
+                result="completed",
+                deal_context_chars=len(deal_context),
+                structured_context_chars=len(structured_context or ""),
+                web_context_chars=len(web_context),
+            )
 
         # ── Step 4: Generate via Mistral Agent ───────────────────
-        await MistralLibraryService.sync_agents_to_libraries(
-            db,
-            MistralLibraryService.library_ids_for_deal(deal),
-        )
         agent_id = MistralLibraryService.get_global_agent_id(db, section.section_key)
         if not agent_id:
             raise ValueError(f"Global agent for {section.section_key} not initialized")
 
         gen_start = time.time()
+        generation_metrics: dict[str, object] = {}
         content = await MistralLibraryService.generate_with_agent(
             agent_id=agent_id,
             section_title=section.title,
@@ -259,22 +367,34 @@ class NarrativeService:
             orchestration_strategy=orchestration.to_strategy_text(),
             custom_instructions=section.custom_instructions,
             output_template=section.output_template,
+            metrics_out=generation_metrics,
+            web_context=web_context,
         )
         gen_ms = (time.time() - gen_start) * 1000
 
         # Preserve the current draft before regeneration, then save the new one.
-        NarrativeVersionService.ensure_current(db, section)
-        section.generated_content = content
-        section.original_generated_content = content
-        section.state = "ready"
-        section.orchestration_strategy = orchestration.to_strategy_text()
-        NarrativeVersionService.create(
-            db,
-            section,
-            content,
-            "generated",
-            f"Mistral Agent: {section.section_key}",
-        )
+        with trace_span(
+            "narrative_version_staging",
+            deal_id=deal_id,
+            section_id=section_id,
+        ) as staging_span:
+            NarrativeVersionService.ensure_current(db, section)
+            section.generated_content = content
+            section.original_generated_content = content
+            section.state = "ready"
+            section.orchestration_strategy = orchestration.to_strategy_text()
+            staged_version = NarrativeVersionService.create(
+                db,
+                section,
+                content,
+                "generated",
+                f"Mistral Agent: {section.section_key}",
+            )
+            set_span_attributes(
+                staging_span,
+                result="staged",
+                version_id=staged_version.id,
+            )
 
         # ── Step 5: Accuracy Evaluation ──────────────────────────
         acc_start = time.time()
@@ -293,6 +413,46 @@ class NarrativeService:
             section.accuracy_score = None
             section.accuracy_details = None
 
+        confidence_from_judge = bool(
+            accuracy and accuracy.get("confidence_source") == "observability_judge"
+        )
+        judge_metrics = (
+            accuracy.get("judge_observability")
+            if accuracy and accuracy.get("judge_observability")
+            else accuracy.get("observability", {})
+            if confidence_from_judge
+            else {
+                "name": "Confidence Judge",
+                "model": "Mistral Observability Judge",
+                "status": "fallback" if accuracy else "not_scored",
+                "latency_ms": None,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "token_usage_available": False,
+            }
+        )
+        claim_evaluator_metrics = (
+            accuracy.get("claim_evaluator_observability") if accuracy else None
+        ) or {
+                "name": "Claim Classification Evaluator",
+                "model": settings.MISTRAL_MODEL,
+                "status": "not_evaluated",
+                "latency_ms": None,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+            }
+        section.observability_details = json.dumps(
+            {
+                "moderation": moderation_metrics,
+                "orchestration": orchestration_metrics,
+                "section_agent": generation_metrics,
+                "judge": judge_metrics,
+                "claim_evaluator": claim_evaluator_metrics,
+            }
+        )
+
         # ── Audit + Timing ───────────────────────────────────────
         total_ms = (time.time() - total_start) * 1000
         mode = "few-shot" if section.custom_instructions else "zero-shot"
@@ -309,27 +469,38 @@ class NarrativeService:
                 f"total={total_ms:.0f}ms"
             )
 
-        audit = AuditEntry(
+        with trace_span(
+            "commit_and_audit",
             deal_id=deal_id,
-            action="narrative.generated",
-            subject=(
-                f"{section.title} ({mode}{has_template}, "
-                f"{doc_count} library docs, "
-                f"orch_conf={orchestration.confidence:.1f}"
-                f"{accuracy_tag}{timing_tag})"
-            ),
-            user=f"Mistral Agent: {section.section_key}",
-        )
-        db.add(audit)
+            section_id=section_id,
+        ) as commit_span:
+            audit = AuditEntry(
+                deal_id=deal_id,
+                action="narrative.generated",
+                subject=(
+                    f"{section.title} ({mode}{has_template}, "
+                    f"{doc_count} library docs, "
+                    f"orch_conf={orchestration.confidence:.1f}"
+                    f"{accuracy_tag}{timing_tag})"
+                ),
+                user=f"Mistral Agent: {section.section_key}",
+            )
+            db.add(audit)
 
-        # Update deal status
-        mandatory = [s for s in deal.sections if not s.optional]
-        ready_count = sum(1 for s in mandatory if s.state == "ready")
-        if deal.status == "Draft" and ready_count > 0:
-            deal.status = "In Progress"
+            # Update deal status
+            mandatory = [s for s in deal.sections if not s.optional]
+            ready_count = sum(1 for s in mandatory if s.state == "ready")
+            if deal.status == "Draft" and ready_count > 0:
+                deal.status = "In Progress"
 
-        db.commit()
-        db.refresh(section)
+            db.commit()
+            db.refresh(section)
+            set_span_attributes(
+                commit_span,
+                result="committed",
+                audit_id=audit.id,
+                deal_status=deal.status,
+            )
 
         # Close the pipeline span with final metrics
         if span:
@@ -353,6 +524,22 @@ class NarrativeService:
         deal_id: str,
         progress_callback: Callable[[str, str, str, str], None] | None = None,
     ) -> list[dict]:
+        deal = db.get(Deal, deal_id)
+        if not deal:
+            return []
+        async with MistralLibraryService.agent_library_scope(
+            db, MistralLibraryService.library_ids_for_deal(deal)
+        ):
+            return await NarrativeService._draft_all_with_configured_agents(
+                db, deal_id, progress_callback
+            )
+
+    @staticmethod
+    async def _draft_all_with_configured_agents(
+        db: Session,
+        deal_id: str,
+        progress_callback: Callable[[str, str, str, str], None] | None = None,
+    ) -> list[dict]:
         """
         Generate narratives for ALL sections in parallel.
 
@@ -372,6 +559,8 @@ class NarrativeService:
         )
         if not deal:
             return []
+
+        owner_key = NarrativeService._owner_key(db, deal)
 
         await MistralLibraryService.sync_agents_to_libraries(
             db,
@@ -402,7 +591,8 @@ class NarrativeService:
         if settings.ORCHESTRATION_ENABLED and deal.customer:
             try:
                 mcp_summaries = await MCPClientService.get_document_summaries_cached(
-                    company_name=deal.customer
+                    company_name=deal.customer,
+                    owner_user_id=owner_key,
                 )
                 logger.info(
                     f"Fetched MCP summaries for '{deal.customer}' "
@@ -418,7 +608,7 @@ class NarrativeService:
             try:
                 structured_data = (
                     await MCPClientService.get_structured_data_cached(
-                        deal.customer
+                        deal.customer, owner_key
                     )
                 )
                 logger.info(
@@ -449,40 +639,122 @@ class NarrativeService:
 
             try:
                 # ── Moderation Gate ──
-                if section.custom_instructions or section.output_template:
-                    report("running", "Checking content moderation")
-                    moderation = await ModerationService.moderate_section_inputs(
-                        custom_instructions=section.custom_instructions,
-                        output_template=section.output_template,
-                    )
-                    section.moderation_status = "safe" if moderation.is_safe else "flagged"
-                    section.moderation_details = json.dumps(moderation.to_dict())
+                with trace_span(
+                    "user_request",
+                    deal_id=deal_id,
+                    section_id=section.id,
+                    section_key=section.section_key,
+                    mode="draft_all",
+                ) as request_span:
+                    set_span_attributes(request_span, result="accepted")
 
-                    if not moderation.is_safe:
-                        flagged = ", ".join(moderation.flagged_categories)
-                        raise ValueError(f"Moderation failed: {flagged}")
+                moderation_metrics = {
+                    "name": "Moderation",
+                    "model": "mistral-moderation-latest",
+                    "status": "skipped",
+                    "latency_ms": None,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                }
+
+                moderation_required = bool(
+                    section.custom_instructions or section.output_template
+                )
+                with trace_span(
+                    "moderation_gate",
+                    section_id=section.id,
+                    required=moderation_required,
+                ) as moderation_span:
+                    if moderation_required:
+                        report("running", "Checking content moderation")
+                        moderation = await ModerationService.moderate_section_inputs(
+                            custom_instructions=section.custom_instructions,
+                            output_template=section.output_template,
+                        )
+                        section.moderation_status = (
+                            "safe" if moderation.is_safe else "flagged"
+                        )
+                        section.moderation_details = json.dumps(moderation.to_dict())
+                        moderation_metrics.update(
+                            {
+                                "status": (
+                                    "success" if moderation.is_safe else "flagged"
+                                ),
+                                "latency_ms": round(moderation.latency_ms),
+                                "input_tokens": moderation.input_tokens,
+                                "output_tokens": moderation.output_tokens,
+                                "total_tokens": moderation.total_tokens,
+                            }
+                        )
+                        set_span_attributes(
+                            moderation_span,
+                            result="safe" if moderation.is_safe else "flagged",
+                        )
+
+                        if not moderation.is_safe:
+                            flagged = ", ".join(moderation.flagged_categories)
+                            raise ValueError(f"Moderation failed: {flagged}")
+                    else:
+                        set_span_attributes(moderation_span, result="skipped")
 
                 # ── Orchestration (lightweight, semaphore=5) ──
                 t0 = time.time()
                 report("waiting", "Waiting for orchestration")
-                async with orch_semaphore:
-                    report("running", "Selecting source documents")
-                    orchestration = await OrchestrationService.select_documents_for_section(
-                        deal=deal,
-                        section=section,
-                        document_summaries=mcp_summaries,
-                        orch_agent_id=orch_agent_id,
+                with trace_span(
+                    "orchestration_preflight",
+                    deal_id=deal_id,
+                    section_id=section.id,
+                ) as orchestration_span:
+                    async with orch_semaphore:
+                        report("running", "Selecting source documents")
+                        orchestration = await OrchestrationService.select_documents_for_section(
+                            deal=deal,
+                            section=section,
+                            document_summaries=mcp_summaries,
+                            orch_agent_id=orch_agent_id,
+                        )
+                    set_span_attributes(
+                        orchestration_span,
+                        result="completed",
+                        confidence=orchestration.confidence,
                     )
                 orch_ms = (time.time() - t0) * 1000
+                orchestration_metrics = {
+                    "name": "Orchestration Agent",
+                    "model": settings.MISTRAL_AGENT_MODEL,
+                    "status": "success",
+                    "latency_ms": round(orch_ms),
+                    "input_tokens": orchestration.input_tokens,
+                    "output_tokens": orchestration.output_tokens,
+                    "total_tokens": orchestration.total_tokens,
+                }
 
                 # ── Deal Context ──
-                deal_context = OrchestrationService.build_deal_context_for_section(
-                    deal, section.section_key
-                )
-                structured_context = structured_context_for_section(
-                    structured_data,
-                    section.section_key,
-                )
+                with trace_span(
+                    "context_assembly",
+                    deal_id=deal_id,
+                    section_id=section.id,
+                    customer=deal.customer,
+                ) as context_span:
+                    deal_context = OrchestrationService.build_deal_context_for_section(
+                        deal, section.section_key
+                    )
+                    structured_context = structured_context_for_section(
+                        structured_data,
+                        section.section_key,
+                    )
+                    web_context, url_scrape_details = await scrape_urls(
+                        source_urls_for_section(section)
+                    )
+                    section.url_scrape_details = json.dumps(url_scrape_details)
+                    set_span_attributes(
+                        context_span,
+                        result="completed",
+                        deal_context_chars=len(deal_context),
+                        structured_context_chars=len(structured_context or ""),
+                        web_context_chars=len(web_context),
+                    )
 
                 # ── Generation (heavy, semaphore=3) ──
                 agent_id = MistralLibraryService.get_global_agent_id(
@@ -492,6 +764,7 @@ class NarrativeService:
                     raise ValueError(f"No global agent found for {section.section_key}")
 
                 t0 = time.time()
+                generation_metrics: dict[str, object] = {}
                 report("waiting", "Waiting for narrative agent")
                 async with gen_semaphore:
                     report("running", "Generating narrative")
@@ -505,6 +778,8 @@ class NarrativeService:
                         orchestration_strategy=orchestration.to_strategy_text(),
                         custom_instructions=section.custom_instructions,
                         output_template=section.output_template,
+                        metrics_out=generation_metrics,
+                        web_context=web_context,
                     )
                 gen_ms = (time.time() - t0) * 1000
 
@@ -520,6 +795,39 @@ class NarrativeService:
                         has_library_docs=has_docs,
                     )
                 acc_ms = (time.time() - t0) * 1000
+                confidence_from_judge = bool(
+                    accuracy
+                    and accuracy.get("confidence_source") == "observability_judge"
+                )
+                judge_metrics = (
+                    accuracy.get("judge_observability")
+                    if accuracy and accuracy.get("judge_observability")
+                    else accuracy.get("observability", {})
+                    if confidence_from_judge
+                    else {
+                        "name": "Confidence Judge",
+                        "model": "Mistral Observability Judge",
+                        "status": "fallback" if accuracy else "not_scored",
+                        "latency_ms": None,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "total_tokens": 0,
+                        "token_usage_available": False,
+                    }
+                )
+                claim_evaluator_metrics = (
+                    accuracy.get("claim_evaluator_observability")
+                    if accuracy
+                    else None
+                ) or {
+                        "name": "Claim Classification Evaluator",
+                        "model": settings.MISTRAL_MODEL,
+                        "status": "not_evaluated",
+                        "latency_ms": None,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "total_tokens": 0,
+                    }
 
                 total_ms = (time.time() - section_start) * 1000
                 logger.info(
@@ -539,6 +847,13 @@ class NarrativeService:
                     "agent": f"Mistral Agent: {section.section_key}",
                     "accuracy": accuracy,
                     "orchestration_strategy": orchestration.to_strategy_text(),
+                    "observability": {
+                        "moderation": moderation_metrics,
+                        "orchestration": orchestration_metrics,
+                        "section_agent": generation_metrics,
+                        "judge": judge_metrics,
+                        "claim_evaluator": claim_evaluator_metrics,
+                    },
                     "timing": {
                         "orchestration_ms": round(orch_ms),
                         "generation_ms": round(gen_ms),
@@ -572,27 +887,42 @@ class NarrativeService:
                 (s for s in deal.sections if s.id == result["section_id"]), None
             )
             if section:
-                NarrativeVersionService.ensure_current(db, section)
-                section.generated_content = result["generated_content"]
-                section.original_generated_content = result["generated_content"]
-                if result["success"]:
-                    section.state = "ready"
-                    NarrativeVersionService.create(
-                        db,
-                        section,
-                        result["generated_content"],
-                        "generated",
-                        f"Mistral Agent: {section.section_key}",
+                with trace_span(
+                    "narrative_version_staging",
+                    deal_id=deal_id,
+                    section_id=section.id,
+                    mode="draft_all",
+                ) as staging_span:
+                    NarrativeVersionService.ensure_current(db, section)
+                    section.generated_content = result["generated_content"]
+                    section.original_generated_content = result["generated_content"]
+                    staged_version = None
+                    if result["success"]:
+                        section.state = "ready"
+                        staged_version = NarrativeVersionService.create(
+                            db,
+                            section,
+                            result["generated_content"],
+                            "generated",
+                            f"Mistral Agent: {section.section_key}",
+                        )
+                    accuracy = result.get("accuracy")
+                    if accuracy:
+                        section.accuracy_score = accuracy["score"]
+                        section.accuracy_details = json.dumps(accuracy)
+                    else:
+                        section.accuracy_score = None
+                        section.accuracy_details = None
+
+                    section.orchestration_strategy = result.get("orchestration_strategy")
+                    section.observability_details = json.dumps(
+                        result.get("observability") or {}
                     )
-                accuracy = result.get("accuracy")
-                if accuracy:
-                    section.accuracy_score = accuracy["score"]
-                    section.accuracy_details = json.dumps(accuracy)
-                else:
-                    section.accuracy_score = None
-                    section.accuracy_details = None
-                
-                section.orchestration_strategy = result.get("orchestration_strategy")
+                    set_span_attributes(
+                        staging_span,
+                        result="staged" if result["success"] else "failed",
+                        version_id=staged_version.id if staged_version else "N/A",
+                    )
 
         # Update deal status
         mandatory = [s for s in deal.sections if not s.optional]
@@ -610,21 +940,32 @@ class NarrativeService:
         if settings.ENABLE_TIMING_METRICS:
             timing_tag = f", total_batch={batch_ms:.0f}ms"
 
-        audit = AuditEntry(
+        with trace_span(
+            "commit_and_audit",
             deal_id=deal_id,
-            action="narrative.draft_all",
-            subject=(
-                f"Generated {succeeded}/{len(results)} sections "
-                f"(orchestrated + Library RAG, "
-                f"gen_sem={settings.GENERATION_SEMAPHORE}, "
-                f"orch_sem={settings.ORCHESTRATION_SEMAPHORE}"
-                f"{timing_tag})"
-            ),
-            user="Agent System",
-        )
-        db.add(audit)
-
-        db.commit()
+            mode="draft_all",
+        ) as commit_span:
+            audit = AuditEntry(
+                deal_id=deal_id,
+                action="narrative.draft_all",
+                subject=(
+                    f"Generated {succeeded}/{len(results)} sections "
+                    f"(orchestrated + Library RAG, "
+                    f"gen_sem={settings.GENERATION_SEMAPHORE}, "
+                    f"orch_sem={settings.ORCHESTRATION_SEMAPHORE}"
+                    f"{timing_tag})"
+                ),
+                user="Agent System",
+            )
+            db.add(audit)
+            db.commit()
+            set_span_attributes(
+                commit_span,
+                result="committed",
+                audit_id=audit.id,
+                succeeded=succeeded,
+                failed=len(results) - succeeded,
+            )
 
         # Close the batch-level span with summary
         if batch_span:
@@ -662,7 +1003,8 @@ class NarrativeService:
         if deal.customer:
             try:
                 mcp_summaries = await MCPClientService.get_document_summaries_cached(
-                    company_name=deal.customer
+                    company_name=deal.customer,
+                    owner_user_id=NarrativeService._owner_key(db, deal),
                 )
             except Exception as e:
                 logger.warning(f"MCP summary fetch failed: {e}")

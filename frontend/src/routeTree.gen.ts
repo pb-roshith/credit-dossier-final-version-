@@ -9,16 +9,22 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as ManufactureDataRouteImport } from './routes/manufacture-data'
+import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as ObservabilityRouteImport } from './routes/observability'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DealsNewRouteImport } from './routes/deals.new'
 import { Route as DealsDealIdRouteImport } from './routes/deals.$dealId'
 
-const ManufactureDataRoute = ManufactureDataRouteImport.update({
-  id: '/manufacture-data',
-  path: '/manufacture-data',
+const ProfileRoute = ProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ObservabilityRoute = ObservabilityRouteImport.update({
+  id: '/observability',
+  path: '/observability',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -51,7 +57,8 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
-  '/manufacture-data': typeof ManufactureDataRoute
+  '/observability': typeof ObservabilityRoute
+  '/profile': typeof ProfileRoute
   '/deals/$dealId': typeof DealsDealIdRoute
   '/deals/new': typeof DealsNewRoute
 }
@@ -59,7 +66,8 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
-  '/manufacture-data': typeof ManufactureDataRoute
+  '/observability': typeof ObservabilityRoute
+  '/profile': typeof ProfileRoute
   '/deals/$dealId': typeof DealsDealIdRoute
   '/deals/new': typeof DealsNewRoute
 }
@@ -68,7 +76,8 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
-  '/manufacture-data': typeof ManufactureDataRoute
+  '/observability': typeof ObservabilityRoute
+  '/profile': typeof ProfileRoute
   '/deals/$dealId': typeof DealsDealIdRoute
   '/deals/new': typeof DealsNewRoute
 }
@@ -78,7 +87,8 @@ export interface FileRouteTypes {
     | '/'
     | '/dashboard'
     | '/login'
-    | '/manufacture-data'
+    | '/observability'
+    | '/profile'
     | '/deals/$dealId'
     | '/deals/new'
   fileRoutesByTo: FileRoutesByTo
@@ -86,7 +96,8 @@ export interface FileRouteTypes {
     | '/'
     | '/dashboard'
     | '/login'
-    | '/manufacture-data'
+    | '/observability'
+    | '/profile'
     | '/deals/$dealId'
     | '/deals/new'
   id:
@@ -94,7 +105,8 @@ export interface FileRouteTypes {
     | '/'
     | '/dashboard'
     | '/login'
-    | '/manufacture-data'
+    | '/observability'
+    | '/profile'
     | '/deals/$dealId'
     | '/deals/new'
   fileRoutesById: FileRoutesById
@@ -103,18 +115,26 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DashboardRoute: typeof DashboardRoute
   LoginRoute: typeof LoginRoute
-  ManufactureDataRoute: typeof ManufactureDataRoute
+  ObservabilityRoute: typeof ObservabilityRoute
+  ProfileRoute: typeof ProfileRoute
   DealsDealIdRoute: typeof DealsDealIdRoute
   DealsNewRoute: typeof DealsNewRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/manufacture-data': {
-      id: '/manufacture-data'
-      path: '/manufacture-data'
-      fullPath: '/manufacture-data'
-      preLoaderRoute: typeof ManufactureDataRouteImport
+    '/profile': {
+      id: '/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof ProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/observability': {
+      id: '/observability'
+      path: '/observability'
+      fullPath: '/observability'
+      preLoaderRoute: typeof ObservabilityRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -159,7 +179,8 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DashboardRoute: DashboardRoute,
   LoginRoute: LoginRoute,
-  ManufactureDataRoute: ManufactureDataRoute,
+  ObservabilityRoute: ObservabilityRoute,
+  ProfileRoute: ProfileRoute,
   DealsDealIdRoute: DealsDealIdRoute,
   DealsNewRoute: DealsNewRoute,
 }

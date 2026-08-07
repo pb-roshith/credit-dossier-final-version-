@@ -9,6 +9,10 @@ from app.database import get_db
 from app.schemas.upload import UploadResponse
 from app.services.ingestion_service import IngestionService
 from app.services.deal_service import DealService
+from app.auth import get_current_user, require_deal_owner
+from app.models.deal import Deal, Section
+from app.models.upload import Upload
+from app.models.user import User
 
 router = APIRouter(tags=["uploads"])
 
@@ -17,6 +21,7 @@ router = APIRouter(tags=["uploads"])
     "/api/deals/{deal_id}/sections/{section_id}/uploads",
     response_model=UploadResponse,
     status_code=201,
+    dependencies=[Depends(require_deal_owner)],
 )
 async def create_upload(
     deal_id: str,
@@ -38,7 +43,10 @@ async def create_upload(
     Mistral handles OCR, chunking, embedding, and retrieval automatically.
     """
     # Validate section exists
-    section = DealService.get_section(db, section_id)
+    section = db.query(Section).filter(
+        Section.id == section_id,
+        Section.deal_id == deal_id,
+    ).first()
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
 
@@ -66,17 +74,36 @@ async def create_upload(
 @router.get(
     "/api/deals/{deal_id}/sections/{section_id}/uploads",
     response_model=list[UploadResponse],
+    dependencies=[Depends(require_deal_owner)],
 )
 def list_uploads(deal_id: str, section_id: str, db: Session = Depends(get_db)):
     """List all uploads for a section."""
-    section = DealService.get_section(db, section_id)
+    section = db.query(Section).filter(
+        Section.id == section_id,
+        Section.deal_id == deal_id,
+    ).first()
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
     return section.uploads
 
 
 @router.delete("/api/uploads/{upload_id}", status_code=204)
-def delete_upload(upload_id: str, db: Session = Depends(get_db)):
+def delete_upload(
+    upload_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Delete an upload and its vector store entries."""
-    if not IngestionService.delete_upload(db, upload_id):
+    query = (
+        db.query(Upload)
+        .join(Section, Upload.section_id == Section.id)
+        .join(Deal, Section.deal_id == Deal.id)
+        .filter(Upload.id == upload_id)
+    )
+    if current_user.role == "relationship_manager":
+        query = query.filter(Deal.owner_user_id == current_user.id)
+    elif current_user.role != "credit_analyst":
+        raise HTTPException(status_code=403, detail="Your role cannot access uploads.")
+    owned_upload = query.first()
+    if not owned_upload or not IngestionService.delete_upload(db, upload_id):
         raise HTTPException(status_code=404, detail="Upload not found")

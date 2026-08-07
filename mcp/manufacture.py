@@ -13,6 +13,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.platypus import (
+    LayoutError,
     PageBreak,
     Paragraph,
     SimpleDocTemplate,
@@ -47,41 +48,68 @@ logger = logging.getLogger("local_mcp.manufacture")
 GENERATOR_VERSION = 2
 
 
-def _styled_table(rows: list[list[object]], body_style: object) -> Table:
+MAX_TABLE_COLUMNS = 4
+MAX_TABLE_CELL_CHARS = 600
+
+
+def _safe_table_cell(value: object) -> str:
+    """Keep AI-generated prose from creating a table row taller than a page."""
+    text = " ".join(str(value).split())
+    if len(text) > MAX_TABLE_CELL_CHARS:
+        text = text[: MAX_TABLE_CELL_CHARS - 1].rstrip() + "…"
+    return escape(text)
+
+
+def _styled_tables(rows: list[list[object]], body_style: object) -> list[Table]:
+    """Render wide tables as readable column groups within the PDF frame."""
     column_count = max(len(row) for row in rows)
-    available_width = A4[0] - 84
-    header_style = body_style.clone("CreditTableHeader")
-    header_style.textColor = colors.white
-    header_style.fontName = "Helvetica-Bold"
-    wrapped_rows = [
-        [
-            Paragraph(
-                escape(str(cell)),
-                header_style if row_index == 0 else body_style,
-            )
-            for cell in row + [""] * (column_count - len(row))
-        ]
-        for row_index, row in enumerate(rows)
-    ]
-    table = Table(
-        wrapped_rows,
-        repeatRows=1,
-        colWidths=[available_width / column_count] * column_count,
-    )
-    table.setStyle(
-        TableStyle(
+    # ReportLab frames reserve six points of padding on both sides in addition
+    # to the document margins. Staying inside this width avoids LayoutError.
+    available_width = A4[0] - 84 - 12
+    tables: list[Table] = []
+    for start in range(0, column_count, MAX_TABLE_COLUMNS):
+        stop = min(start + MAX_TABLE_COLUMNS, column_count)
+        chunk_size = stop - start
+        cell_style = body_style.clone(f"CreditTableBody{start}")
+        cell_style.fontSize = 8.5
+        cell_style.leading = 10
+        header_style = cell_style.clone(f"CreditTableHeader{start}")
+        header_style.textColor = colors.white
+        header_style.fontName = "Helvetica-Bold"
+        wrapped_rows = [
             [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#003A8C")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#9AA6B2")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                Paragraph(
+                    _safe_table_cell(
+                        (row + [""] * (column_count - len(row)))[column_index]
+                    ),
+                    header_style if row_index == 0 else cell_style,
+                )
+                for column_index in range(start, stop)
             ]
+            for row_index, row in enumerate(rows)
+        ]
+        table = Table(
+            wrapped_rows,
+            repeatRows=1,
+            colWidths=[available_width / chunk_size] * chunk_size,
+            splitByRow=1,
+            hAlign="LEFT",
         )
-    )
-    return table
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#003A8C")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#9AA6B2")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ]
+            )
+        )
+        tables.append(table)
+    return tables
 
 
 def write_pdf(
@@ -144,7 +172,9 @@ def write_pdf(
                 if isinstance(row, (list, tuple)) and row
             ] if isinstance(rows, list) else []
             if valid_rows:
-                story.append(_styled_table(valid_rows, styles["BodyText"]))
+                for table in _styled_tables(valid_rows, styles["BodyText"]):
+                    story.append(table)
+                    story.append(Spacer(1, 6))
                 story.append(Spacer(1, 9))
         if section_index and section_index % 2 == 1 and section_index < len(sections) - 1:
             story.append(PageBreak())
@@ -170,7 +200,16 @@ def create_pdf_payloads(
     payloads: dict[str, bytes] = {}
     for filename in PDF_FILES:
         buffer = io.BytesIO()
-        summary = write_pdf(buffer, filename, context, generator)
+        try:
+            summary = write_pdf(buffer, filename, context, generator)
+        except LayoutError:
+            logger.warning(
+                "AI layout was too large for %s; using the deterministic document fallback",
+                filename,
+                exc_info=True,
+            )
+            buffer = io.BytesIO()
+            summary = write_pdf(buffer, filename, context, None)
         if summaries is not None:
             summaries[filename] = summary
         payloads[filename] = buffer.getvalue()
@@ -214,7 +253,10 @@ def upload_pdfs_to_mistral(
 
         existing = {
             doc["document_name"]: doc
-            for doc in list_documents(str(context["company_name"]))
+            for doc in list_documents(
+                str(company["owner_user_id"]),
+                str(context["company_name"]),
+            )
         }
         for number, (filename, pdf_bytes) in enumerate(
             pdf_payloads.items(), start=1
@@ -276,6 +318,7 @@ def upload_pdfs_to_mistral(
 
 
 def manufacture_company_data(
+    owner_user_id: str,
     company_name: str,
     industry: str,
     geography: str,
@@ -295,7 +338,9 @@ def manufacture_company_data(
     with ManufacturingAgent() as generator:
         logger.info("Generating detailed shared borrower context")
         context = generator.generate_context(fallback_context)
-        company = upsert_company(company_name, industry, geography, context)
+        company = upsert_company(
+            owner_user_id, company_name, industry, geography, context
+        )
 
         logger.info("Generating 17 detailed synthetic PDFs in memory")
         pdf_payloads = create_pdf_payloads(
@@ -314,7 +359,7 @@ def manufacture_company_data(
             )
         used_ai_generation = generator.available
 
-    company = get_company(company_name) or company
+    company = get_company(owner_user_id, company_name) or company
 
     logger.info("Uploading PDFs to Mistral Library")
     library_id, uploaded_count, upload_error = upload_pdfs_to_mistral(
@@ -349,6 +394,7 @@ def manufacture_company_data(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--company-name", required=True)
+    parser.add_argument("--owner-user-id", required=True)
     parser.add_argument("--industry", required=True)
     parser.add_argument("--geography", required=True)
     parser.add_argument("--json", action="store_true", dest="as_json")
@@ -359,6 +405,7 @@ def main() -> None:
         format="%(asctime)s | %(levelname)s | %(message)s",
     )
     result = manufacture_company_data(
+        args.owner_user_id,
         args.company_name,
         args.industry,
         args.geography,

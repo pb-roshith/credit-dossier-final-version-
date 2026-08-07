@@ -5,6 +5,7 @@ Deal CRUD service — all deal-related database operations.
 from __future__ import annotations
 
 import uuid
+import json
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models.deal import Deal, Section, AuditEntry, Version
 from app.models.library_file import LibraryFile
+from app.models.user import User
 
 
 # ── Default section definitions ────────────────────────────────
@@ -41,6 +43,7 @@ class DealService:
     @staticmethod
     def list_deals(
         db: Session,
+        current_user: User,
         status: Optional[str] = None,
         search: Optional[str] = None,
     ) -> list[Deal]:
@@ -48,6 +51,10 @@ class DealService:
             joinedload(Deal.sections),
             joinedload(Deal.versions),
         )
+        if current_user.role == "relationship_manager":
+            query = query.filter(Deal.owner_user_id == current_user.id)
+        elif current_user.role != "credit_analyst":
+            return []
         if status and status != "all":
             query = query.filter(Deal.status == status)
         if search:
@@ -69,10 +76,11 @@ class DealService:
         )
 
     @staticmethod
-    def create_deal(db: Session, data: dict) -> Deal:
+    def create_deal(db: Session, data: dict, owner_user_id: str) -> Deal:
         deal_id = "deal_" + uuid.uuid4().hex[:7]
         deal = Deal(
             id=deal_id,
+            owner_user_id=owner_user_id,
             customer=data["customer"],
             customer_type=data.get("customer_type", "Existing"),
             industry=data.get("industry", ""),
@@ -177,6 +185,7 @@ class DealService:
             "custom_instructions", "output_template", "generated_content",
             "moderation_status", "moderation_details",
             "accuracy_score", "accuracy_details",
+            "url_scrape_details",
         }
 
         for key, value in data.items():
@@ -185,6 +194,8 @@ class DealService:
             # Allow None for nullable fields; skip None for non-nullable fields
             if value is None and key not in nullable_fields:
                 continue
+            if key == "source_urls" and isinstance(value, list):
+                value = json.dumps(value)
             setattr(section, key, value)
 
         db.commit()
@@ -209,7 +220,9 @@ class DealService:
         db.commit()
 
     @staticmethod
-    def create_version(db: Session, deal_id: str, notes: str) -> Version | None:
+    def create_version(
+        db: Session, deal_id: str, notes: str, actor_user_id: str
+    ) -> Version | None:
         deal = db.query(Deal).filter(Deal.id == deal_id).first()
         if not deal:
             return None
@@ -224,7 +237,7 @@ class DealService:
             deal_id=deal_id,
             action="version.submitted",
             subject=version.id,
-            user="Analyst",
+            user=actor_user_id,
         )
         db.add(audit)
 
@@ -233,14 +246,25 @@ class DealService:
         return version
 
     @staticmethod
-    def approve_version(db: Session, deal_id: str, version_id: str) -> Version | None:
+    def approve_version(
+        db: Session,
+        deal_id: str,
+        version_id: str,
+        actor_user_id: str,
+        comments: str = "",
+    ) -> Version | None:
         version = db.query(Version).filter(
-            Version.id == version_id, Version.deal_id == deal_id
+            Version.id == version_id,
+            Version.deal_id == deal_id,
+            Version.status == "submitted",
         ).first()
         if not version:
             return None
 
         version.status = "approved"
+        version.review_comments = comments.strip() or None
+        version.reviewed_by = actor_user_id
+        version.reviewed_at = datetime.now(timezone.utc)
 
         deal = db.query(Deal).filter(Deal.id == deal_id).first()
         if deal:
@@ -251,10 +275,48 @@ class DealService:
             deal_id=deal_id,
             action="version.approved",
             subject=version_id,
-            user="Analyst",
+            user=actor_user_id,
         )
         db.add(audit)
 
+        db.commit()
+        db.refresh(version)
+        return version
+
+    @staticmethod
+    def deny_version(
+        db: Session,
+        deal_id: str,
+        version_id: str,
+        actor_user_id: str,
+        comments: str,
+    ) -> Version | None:
+        version = db.query(Version).filter(
+            Version.id == version_id,
+            Version.deal_id == deal_id,
+            Version.status == "submitted",
+        ).first()
+        if not version:
+            return None
+
+        version.status = "denied"
+        version.review_comments = comments.strip()
+        version.reviewed_by = actor_user_id
+        version.reviewed_at = datetime.now(timezone.utc)
+
+        deal = db.query(Deal).filter(Deal.id == deal_id).first()
+        if deal:
+            deal.status = "Changes Requested"
+            deal.updated_at = datetime.now(timezone.utc)
+
+        db.add(
+            AuditEntry(
+                deal_id=deal_id,
+                action="version.denied",
+                subject=version_id,
+                user=actor_user_id,
+            )
+        )
         db.commit()
         db.refresh(version)
         return version
