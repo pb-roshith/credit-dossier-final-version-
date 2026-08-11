@@ -2530,6 +2530,7 @@ function VersionsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const [submitting, setSubmitting] = useState(false);
   const [reviewComments, setReviewComments] = useState<Record<string, string>>({});
   const [reviewingVersionId, setReviewingVersionId] = useState<string | null>(null);
+  const [downloadingVersionId, setDownloadingVersionId] = useState<string | null>(null);
   const ready = deal.sections.filter((s) => !s.optional && s.state === "ready").length;
   const total = deal.sections.filter((s) => !s.optional).length;
   const pending = deal.sections.filter((s) => !s.optional && s.state === "pending");
@@ -2578,6 +2579,19 @@ function VersionsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       alert(err instanceof Error ? err.message : "Denial failed.");
     } finally {
       setReviewingVersionId(null);
+    }
+  };
+
+  const download = async (versionId: string) => {
+    if (downloadingVersionId) return;
+    setDownloadingVersionId(versionId);
+    try {
+      await api.versions.download(deal.id, versionId);
+    } catch (err) {
+      console.error("Version download failed:", err);
+      alert(err instanceof Error ? err.message : "Version download failed.");
+    } finally {
+      setDownloadingVersionId(null);
     }
   };
 
@@ -2708,6 +2722,20 @@ function VersionsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                     <div className="text-xs text-muted-foreground">
                       {new Date(v.created_at).toLocaleString()}
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => download(v.id)}
+                      disabled={downloadingVersionId !== null}
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-background text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+                      title={`Download ${v.id} as PDF`}
+                      aria-label={`Download ${v.id} as PDF`}
+                    >
+                      {downloadingVersionId === v.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="h-4 w-4" />
+                      )}
+                    </button>
                   </div>
                 </div>
                 {v.review_comments && (
@@ -2759,29 +2787,6 @@ function VersionsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
             ))}
           </ul>
         )}
-      </div>
-
-      <div className="doc-card">
-        <div className="doc-section-header">
-          <span>Audit Trail ({deal.audit_entries.length})</span>
-        </div>
-        <ul className="divide-y">
-          {deal.audit_entries
-            .slice()
-            .reverse()
-            .map((a) => (
-              <li key={a.id} className="flex items-start justify-between gap-4 p-4">
-                <div>
-                  <div className="font-semibold">{a.action}</div>
-                  <div className="text-xs text-muted-foreground">{a.subject}</div>
-                </div>
-                <div className="text-right text-xs text-muted-foreground">
-                  <div className="font-medium text-foreground">{a.user}</div>
-                  <div>{new Date(a.created_at).toLocaleString()}</div>
-                </div>
-              </li>
-            ))}
-        </ul>
       </div>
     </div>
   );

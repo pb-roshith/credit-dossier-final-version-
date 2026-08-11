@@ -223,11 +223,50 @@ class DealService:
     def create_version(
         db: Session, deal_id: str, notes: str, actor_user_id: str
     ) -> Version | None:
-        deal = db.query(Deal).filter(Deal.id == deal_id).first()
+        deal = (
+            db.query(Deal)
+            .options(joinedload(Deal.sections))
+            .filter(Deal.id == deal_id)
+            .first()
+        )
         if not deal:
             return None
 
-        version = Version(deal_id=deal_id, notes=notes, status="submitted")
+        snapshot = {
+            "deal": {
+                field: getattr(deal, field)
+                for field in (
+                    "customer", "customer_type", "industry", "segment", "geography",
+                    "sector", "kyc", "facility", "currency", "amount", "tenure",
+                    "pricing", "repayment", "collateral", "due", "primary_color",
+                    "secondary_color", "theme_palette",
+                )
+            },
+            "sections": [
+                {
+                    "id": section.id,
+                    "title": section.title,
+                    "state": section.state,
+                    "order_index": section.order_index,
+                    # A submitted deal version freezes the draft currently
+                    # shown to the reviewer, independently of any previously
+                    # marked-final narrative version.
+                    "generated_content": (
+                        section.generated_content or section.final_generated_content
+                    ),
+                    "final_generated_content": (
+                        section.generated_content or section.final_generated_content
+                    ),
+                }
+                for section in deal.sections
+            ],
+        }
+        version = Version(
+            deal_id=deal_id,
+            notes=notes,
+            status="submitted",
+            snapshot_json=json.dumps(snapshot),
+        )
         db.add(version)
 
         deal.status = "In Review"

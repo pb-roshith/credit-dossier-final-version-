@@ -455,6 +455,24 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify({ comments }),
       }),
+    download: async (dealId: string, versionId: string) => {
+      const res = await fetch(`${API_BASE}/deals/${dealId}/versions/${versionId}/download`);
+      if (!res.ok) {
+        const error = await res.json().catch(() => null);
+        throw new Error(error?.detail || `Version download failed: ${res.status}`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const contentDisposition = res.headers.get("content-disposition");
+      const filename = contentDisposition?.match(/filename="(.+)"/)?.[1] || `${versionId}.pdf`;
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    },
   },
 
   // Deal Documents (Legacy — kept for backward compat)

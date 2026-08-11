@@ -41,6 +41,7 @@ _ADDITIVE_MIGRATIONS: dict[str, dict[str, str]] = {
         "review_comments": "TEXT",
         "reviewed_by": "VARCHAR(64)",
         "reviewed_at": "TIMESTAMP WITH TIME ZONE",
+        "snapshot_json": "TEXT",
     },
 }
 
