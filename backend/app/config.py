@@ -29,7 +29,6 @@ class Settings(BaseSettings):
     # ── Application ─────────────────────────────────────────────
     APP_ENV: str = "development"
     UPLOAD_DIR: str = "./uploads"
-    VECTOR_STORE_DIR: str = "./vector_store"
 
     # ── Orchestration ──────────────────────────────────────────
     ORCHESTRATION_ENABLED: bool = True
@@ -63,12 +62,5 @@ class Settings(BaseSettings):
         p = Path(self.UPLOAD_DIR)
         p.mkdir(parents=True, exist_ok=True)
         return p
-
-    @property
-    def vector_store_path(self) -> Path:
-        p = Path(self.VECTOR_STORE_DIR)
-        p.mkdir(parents=True, exist_ok=True)
-        return p
-
 
 settings = Settings()

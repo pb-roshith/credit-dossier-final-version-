@@ -23,9 +23,6 @@ mistralai>=2.7.0
 # MCP Client (Model Context Protocol)
 mcp>=1.28.0
 
-# Vector Database for RAG
-chromadb>=1.5.0
-
 # File Processing
 PyPDF2>=3.0.0
 pypdf>=6.13.0

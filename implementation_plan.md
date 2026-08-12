@@ -133,7 +133,7 @@ Acceptance criteria: a submitted PDF is byte/content-stable with respect to late
 - [ ] Migrate any required `DealDocument`/`Upload` records to Mistral library metadata.
 - [ ] Update remaining UI labels and comments that describe deal documents as "new" or the library as a temporary path.
 - [ ] Deprecate compatibility endpoints in OpenAPI before removal.
-- [ ] Remove unused Chroma/vector-store configuration and dependency only after confirming no deployment relies on it.
+- [x] Removed unused vector-store configuration and dependency after confirming no code path relies on it.
 
 Acceptance criteria: one primary upload model is used by both frontends and generation, with a tested migration/rollback path for older records.
 
