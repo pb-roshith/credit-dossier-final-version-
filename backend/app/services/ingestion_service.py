@@ -5,7 +5,7 @@ for high-accuracy text extraction (tables, scanned docs, complex layouts).
 Documents are stored at the deal level and can be linked to multiple sections.
 SHA-256 hashing prevents re-processing duplicate files.
 
-Fallback: local extraction via PyPDF2/python-docx if Mistral OCR fails.
+Fallback: local extraction via pypdf/python-docx if Mistral OCR fails.
 """
 
 from __future__ import annotations
@@ -100,8 +100,8 @@ async def extract_text_with_mistral_ocr(
 
 
 def _extract_text_from_pdf(file_bytes: bytes) -> str:
-    """Fallback PDF extraction using PyPDF2."""
-    from PyPDF2 import PdfReader
+    """Fallback PDF extraction using pypdf."""
+    from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(file_bytes))
     pages = []
