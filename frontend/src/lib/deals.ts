@@ -267,33 +267,6 @@ export type NarrativeVersion = {
   created_at: string;
 };
 
-export type ManufactureResult = {
-  companyName: string;
-  industry: string;
-  geography: string;
-  databaseName: string;
-  mcpUrl: string;
-  pdfCount: number;
-  generatedPdfCount: number;
-  uploadedPdfCount: number;
-  tableCount: number;
-  seededRowCount: number;
-  mistralLibraryId: string | null;
-  uploadError: string | null;
-  generatorVersion: number;
-  aiDetailedGeneration: boolean;
-  syntheticData: boolean;
-};
-
-export type ManufactureJob = {
-  job_id: string;
-  status: "queued" | "running" | "completed" | "failed";
-  percent: number;
-  stage: string;
-  result: ManufactureResult | null;
-  error: string | null;
-};
-
 // ── Fetch helpers ──────────────────────────────────────────────
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -594,15 +567,6 @@ export const api = {
       ),
   },
 
-  // Local MCP synthetic-data manufacturing
-  manufacture: {
-    start: (data: { company_name: string; industry: string; geography: string }) =>
-      request<ManufactureJob>(`${API_BASE}/manufacture`, {
-        method: "POST",
-        body: JSON.stringify(data),
-      }),
-    status: (jobId: string) => request<ManufactureJob>(`${API_BASE}/manufacture/${jobId}`),
-  },
 };
 
 // ── Utility ────────────────────────────────────────────────────

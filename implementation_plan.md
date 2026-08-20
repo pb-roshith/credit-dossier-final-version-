@@ -20,7 +20,7 @@ Status labels:
 | Guardrails | Implemented | Mistral moderation for custom instructions and templates |
 | Evidence/evaluation | Implemented | Citations/retrieved sources, claim classification, confidence score |
 | Narrative history | Implemented | Automatic/manual versions, mark final, compare, and delete |
-| Review snapshots | Implemented | Backend and both UIs support frozen submitted-version PDF download |
+| Review snapshots | Implemented | Backend and frontend support frozen submitted-version PDF download |
 | Observability | Implemented | Mistral telemetry, optional Phoenix, stored metrics, observability UI |
 | Local MCP | Implemented | Owner-scoped companies, 16 tables, PDF tools, caching, circuit breaker |
 | Synthetic data | Implemented | Background/CLI manufacture of consistent 17-PDF and 16-table company packs |
@@ -32,7 +32,7 @@ Status labels:
 ### 1. Identity and deal access
 
 - `User` and `AuthSession` models persist accounts and hashed session tokens.
-- The backend selects an independent cookie for `frontend` and `frontend_2` using a proxy header.
+- The backend uses one HTTP-only session cookie for the frontend.
 - Relationship Managers see only owned deals and are the only role allowed to create or submit them.
 - Credit Analysts can access all deals and are the only role allowed to approve or deny submitted versions.
 - MCP company requests include the application user ID, preventing cross-owner company-data access.
@@ -168,20 +168,18 @@ Acceptance criteria: jobs survive restarts, multiple workers cannot cross-bind l
 
 Acceptance criteria: releases have repeatable quality scores and regressions can be traced to model, prompt, source, or pipeline changes.
 
-### Priority 3 - frontend consolidation
+### Priority 3 - frontend quality
 
-- [ ] Define whether `frontend_2` remains a supported product variant or becomes a feature branch of one frontend.
-- [ ] Share API types/components or generate the client from OpenAPI to prevent drift.
-- [ ] Move Manufacture Data behind role/environment controls rather than maintaining broad UI duplication.
+- [ ] Generate the client from OpenAPI to prevent API contract drift.
 - [ ] Add end-to-end tests for login, deal generation, source inspection, review, snapshot download, and export.
 
-Acceptance criteria: supported UI variants expose intentional differences only and share a single tested API contract.
+Acceptance criteria: the frontend has a single tested API contract.
 
 ## Verification matrix
 
 | Area | Automated verification | Manual verification |
 |---|---|---|
-| Auth/roles | Login, expiry, owner filtering, route-level 403/404 behavior | Use RM and analyst in separate frontend sessions |
+| Auth/roles | Login, expiry, owner filtering, route-level 403/404 behavior | Exercise RM and analyst workflows |
 | MCP | Tool smoke tests, cache/circuit-breaker tests, owner isolation | Browse/select a manufactured company |
 | Libraries | Upload/delete/sync tests; library scoping concurrency test | Confirm company and deal sources appear separately |
 | Generation | Single and batch service tests with mocked Mistral/MCP | Generate representative mandatory and optional sections |
@@ -190,7 +188,7 @@ Acceptance criteria: supported UI variants expose intentional differences only a
 | Versions | Narrative final/delete tests; frozen snapshot download tests | Submit, edit afterward, then download old version |
 | Exports | Parse/smoke-test PDF, DOCX, and PPTX outputs | Check tables, markdown, theme, and filenames |
 | Observability | Metrics serialization and trace setup tests | Inspect `/observability`, Mistral, and Phoenix traces |
-| Frontends | `npm run build`, lint, targeted component/E2E tests | Exercise both ports with independent users |
+| Frontend | `npm run build`, lint, targeted component/E2E tests | Exercise the application on port 8080 |
 
 Suggested local commands:
 
@@ -202,9 +200,6 @@ cd ..\frontend
 npm run build
 npm run lint
 
-cd ..\frontend_2
-npm run build
-npm run lint
 ```
 
 Tests requiring Mistral, PostgreSQL, MCP, or Phoenix should clearly distinguish unit/mocked runs from live integration runs and must not rely on committed secrets.

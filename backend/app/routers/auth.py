@@ -10,11 +10,11 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.auth import (
+    SESSION_COOKIE,
     SESSION_HOURS,
     create_session,
     get_current_user,
     hash_password,
-    session_cookie_name,
     validate_password_strength,
     verify_password,
 )
@@ -93,7 +93,6 @@ def _set_session_cookie(response: Response, raw_token: str, cookie_name: str) ->
 def login(
     credentials: Credentials,
     response: Response,
-    request: Request,
     db: Session = Depends(get_db),
 ):
     user = db.query(User).filter(User.user_id == credentials.user_id).first()
@@ -103,7 +102,7 @@ def login(
             detail="Invalid user ID or password.",
         )
     raw_token, _ = create_session(db, user)
-    _set_session_cookie(response, raw_token, session_cookie_name(request))
+    _set_session_cookie(response, raw_token, SESSION_COOKIE)
     return UserResponse(user_id=user.user_id, role=user.role)
 
 
@@ -142,7 +141,7 @@ def change_password(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    session_token = request.cookies.get(session_cookie_name(request))
+    session_token = request.cookies.get(SESSION_COOKIE)
     if not session_token:
         raise HTTPException(status_code=401, detail="Your session is invalid.")
     if not verify_password(data.current_password, current_user.password_hash):
@@ -194,8 +193,7 @@ def logout(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    cookie_name = session_cookie_name(request)
-    session_token = request.cookies.get(cookie_name)
+    session_token = request.cookies.get(SESSION_COOKIE)
     if session_token:
         token_hash = hashlib.sha256(session_token.encode("utf-8")).hexdigest()
         auth_session = (
@@ -204,5 +202,5 @@ def logout(
         if auth_session:
             db.delete(auth_session)
             db.commit()
-    response.delete_cookie(cookie_name, path="/", samesite="lax")
+    response.delete_cookie(SESSION_COOKIE, path="/", samesite="lax")
     return Response(status_code=204, headers=response.headers)

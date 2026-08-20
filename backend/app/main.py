@@ -33,7 +33,6 @@ from app.routers.exports import router as exports_router
 from app.routers.documents import router as documents_router
 from app.routers.library import router as library_router
 from app.routers.mcp import router as mcp_router
-from app.routers.manufacture import router as manufacture_router
 from app.routers.auth import router as auth_router
 
 # Configure logging
@@ -162,7 +161,6 @@ app.include_router(exports_router, dependencies=authenticated)
 app.include_router(documents_router, dependencies=authenticated)
 app.include_router(library_router, dependencies=authenticated)
 app.include_router(mcp_router, dependencies=authenticated)
-app.include_router(manufacture_router, dependencies=authenticated)
 
 
 @app.get("/api/health")

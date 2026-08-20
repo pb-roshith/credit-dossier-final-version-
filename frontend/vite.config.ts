@@ -44,9 +44,6 @@ export default defineConfig({
       "/api": {
         target: "http://localhost:8000",
         changeOrigin: true,
-        headers: {
-          "x-credit-dossier-frontend": "frontend",
-        },
       },
     },
   }

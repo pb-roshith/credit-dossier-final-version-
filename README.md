@@ -14,7 +14,7 @@ AI-assisted credit pitch-book workflow for relationship managers and credit anal
 - Editable narratives, per-section history, final-version selection, and version deletion.
 - Deal submission/review with immutable submission snapshots and PDF download of the submitted state.
 - PDF, DOCX, and PPTX exports, plus theme extraction from a reference document.
-- Local synthetic-data manufacturing for repeatable demos and testing.
+- Access to previously manufactured MCP company data for repeatable demos.
 - Mistral telemetry and optional Arize Phoenix/OpenTelemetry tracing, plus an in-app observability view.
 
 ## Repository layout
@@ -23,15 +23,13 @@ AI-assisted credit pitch-book workflow for relationship managers and credit anal
 Credit_Dossier/
 |-- backend/          FastAPI, SQLAlchemy, Mistral agents, services, and tests
 |-- frontend/         Primary React/TanStack application (http://localhost:8080)
-|-- frontend_2/       Alternate UI with Manufacture Data (http://localhost:8081)
 |-- mcp/              Local credit-intelligence MCP and data manufacturer
-|-- test-data/        Manual test fixtures
 |-- architecture.md   Current system design and runtime flows
 |-- implementation_plan.md
 `-- run.md            Short local run guide
 ```
 
-Both frontends use the same backend and database. They send different frontend identifiers so each can keep an independent localhost session cookie.
+The frontend uses the backend API and a single HTTP-only session cookie.
 
 ## Technology
 
@@ -93,7 +91,7 @@ The API is available at `http://127.0.0.1:8000`; OpenAPI documentation is at `ht
 
 Startup creates missing tables, applies safe additive migrations, seeds configured initial users, connects to MCP when available, and initializes the 16 section agents plus the orchestration agent. MCP connection failure is non-fatal; generation can continue with the available Mistral libraries and manually supplied sources.
 
-### 3. Start a frontend
+### 3. Start the frontend
 
 ```powershell
 cd frontend
@@ -101,7 +99,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:8080`. To use the alternate UI, run the same commands in `frontend_2` and open `http://localhost:8081`.
+Open `http://localhost:8080`.
 
 For the four-terminal version of these instructions, see [run.md](run.md).
 
@@ -136,7 +134,6 @@ Except for health and authentication, API routes require a valid session. Deal-s
 | `GET` | `/api/deals/{deal_id}/versions/{version_id}/download` | Download the frozen snapshot as PDF |
 | `POST` | `/api/deals/{deal_id}/export/{format}` | Export current content as `pdf`, `docx`, or `pptx` |
 | `GET` | `/api/companies` | List MCP companies visible to the user |
-| `POST` | `/api/manufacture` | Start a synthetic company-data job |
 
 Legacy deal-document and section-upload endpoints remain for compatibility, but the Mistral library is the primary generation source.
 
