@@ -45,6 +45,7 @@ import {
 } from "@/lib/deals";
 import { diffWords } from "diff";
 import { useAuth } from "@/lib/auth";
+import { apiErrorFromResponse } from "@/lib/api-error";
 
 export const Route = createFileRoute("/deals/$dealId")({
   head: () => ({ meta: [{ title: "Deal — Credit Pitch Book" }] }),
@@ -2838,7 +2839,7 @@ function ExportTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
         method: "POST",
         body: formData,
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) throw await apiErrorFromResponse(res, "Theme extraction failed.");
       refresh();
     } catch (err) {
       console.error("Theme extraction failed:", err);
@@ -2874,7 +2875,7 @@ function ExportTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error("Failed to update palette");
+      if (!res.ok) throw await apiErrorFromResponse(res, "Palette update failed.");
       refresh();
     } catch (err) {
       console.error(err);

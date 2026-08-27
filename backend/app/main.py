@@ -23,7 +23,7 @@ from app.config import settings
 from app.database import engine, Base
 from app.models import Deal, Section, AuditEntry, Version, Upload  # noqa: F401
 from app.models import DealDocument, SectionDocumentLink  # noqa: F401 — register models
-from app.models import MistralAgent, LibraryFile, NarrativeVersion, User, AuthSession  # noqa: F401
+from app.models import MistralAgent, LibraryFile, NarrativeVersion, User, AuthSession, SecurityAnswer, PasswordPolicyConfiguration, PasswordAuditEvent, AuditLog  # noqa: F401
 from app.auth import get_current_user
 from app.routers.deals import router as deals_router
 from app.routers.sections import router as sections_router
@@ -34,6 +34,7 @@ from app.routers.documents import router as documents_router
 from app.routers.library import router as library_router
 from app.routers.mcp import router as mcp_router
 from app.routers.auth import router as auth_router
+from app.routers.admin import router as admin_router
 
 # Configure logging
 logging.basicConfig(
@@ -41,6 +42,10 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+from app.audit import install_audit_middleware
+from app.error_handlers import install_exception_handlers
+from app.request_security import install_request_security_middleware
 
 
 @asynccontextmanager
@@ -57,20 +62,32 @@ async def lifespan(app: FastAPI):
     t_step = time.time()
     logger.info("[startup] Creating database tables…")
     Base.metadata.create_all(bind=engine)
+    from app.audit import install_system_error_logging
+    system_error_handler = install_system_error_logging()
+    logger.debug("System error audit handler active: %s", type(system_error_handler).__name__)
     from app.migrations import apply_additive_migrations
-    apply_additive_migrations(engine)
+    applied_migrations = apply_additive_migrations(engine)
+    if not applied_migrations:
+        logger.debug("Database schema already includes all additive migrations.")
 
     from app.database import SessionLocal
-    from app.auth import seed_initial_users
+    from app.auth import cap_existing_session_expirations, seed_initial_users
     from app.services.library_sync_service import LibrarySyncService
     auth_db = SessionLocal()
     try:
+        from app.audit import migrate_legacy_password_audit
+        migrated_audit_rows = migrate_legacy_password_audit(auth_db)
+        logger.info("Migrated %s legacy password audit row(s).", migrated_audit_rows)
         seed_initial_users(auth_db)
+        capped_sessions = cap_existing_session_expirations(auth_db)
+        logger.info("Capped %s legacy session expiration(s).", capped_sessions)
         from app.migrations import backfill_deal_owners
         fallback_user = auth_db.query(User).order_by(User.created_at).first()
         if fallback_user:
-            backfill_deal_owners(engine, fallback_user.id)
-        LibrarySyncService.reset_interrupted_syncs(auth_db)
+            backfilled_deals = backfill_deal_owners(engine, fallback_user.id)
+            logger.info("Backfilled %s legacy deal owner(s).", backfilled_deals)
+        reset_syncs = LibrarySyncService.reset_interrupted_syncs(auth_db)
+        logger.info("Reset %s interrupted library sync(s).", reset_syncs)
     finally:
         auth_db.close()
     logger.info(f"[startup] Database ready ({(time.time() - t_step)*1000:.0f}ms)")
@@ -83,8 +100,14 @@ async def lifespan(app: FastAPI):
     t_step = time.time()
     logger.info("[startup] Connecting to MCP server…")
     try:
-        await MCPClientService.connect()
-        logger.info(f"[startup] MCP connected ({(time.time() - t_step)*1000:.0f}ms)")
+        mcp_connected = await MCPClientService.connect()
+        if mcp_connected:
+            logger.info(f"[startup] MCP connected ({(time.time() - t_step)*1000:.0f}ms)")
+        else:
+            logger.warning(
+                f"[startup] MCP connection unavailable ({(time.time() - t_step)*1000:.0f}ms). "
+                "Continuing without MCP; orchestration will use library RAG only."
+            )
     except Exception as e:
         logger.warning(
             f"[startup] MCP connection failed ({(time.time() - t_step)*1000:.0f}ms): {e}. "
@@ -135,16 +158,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+install_exception_handlers(app)
+install_audit_middleware(app)
+install_request_security_middleware(app)
+
 # ── CORS ────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8080",
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:8080",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=settings.cors_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -153,6 +174,7 @@ app.add_middleware(
 # ── Mount routers ───────────────────────────────────────────────
 authenticated = [Depends(get_current_user)]
 app.include_router(auth_router)
+app.include_router(admin_router)
 app.include_router(deals_router, dependencies=authenticated)
 app.include_router(sections_router, dependencies=authenticated)
 app.include_router(versions_router, dependencies=authenticated)

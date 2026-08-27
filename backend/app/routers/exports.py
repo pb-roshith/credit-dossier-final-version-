@@ -9,9 +9,11 @@ from sqlalchemy.orm import Session
 import io
 
 from app.database import get_db
-from app.auth import require_deal_owner
+from app.auth import get_current_user, require_deal_owner
 from app.services.export_service import ExportService
 from app.models.deal import AuditEntry
+from app.models.user import User
+from app.report_security import safe_export_filename, secure_download_headers
 
 router = APIRouter(prefix="/api/deals/{deal_id}", tags=["exports"], dependencies=[Depends(require_deal_owner)])
 
@@ -38,7 +40,12 @@ FORMAT_CONFIG = {
 import inspect
 
 @router.post("/export/{format}")
-async def export_deal(deal_id: str, format: str, db: Session = Depends(get_db)):
+async def export_deal(
+    deal_id: str,
+    format: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     Export the deal as PPT, PDF, or DOCX.
     Returns a downloadable file.
@@ -65,7 +72,7 @@ async def export_deal(deal_id: str, format: str, db: Session = Depends(get_db)):
         deal_id=deal_id,
         action=f"export.{format}",
         subject=deal.customer,
-        user="Analyst",
+        user=current_user.user_id,
     )
     db.add(audit)
 
@@ -75,17 +82,21 @@ async def export_deal(deal_id: str, format: str, db: Session = Depends(get_db)):
 
     db.commit()
 
-    filename = f"{deal.customer.replace(' ', '_')}_PitchBook.{config['extension']}"
+    filename = safe_export_filename(deal.customer, "PitchBook", config["extension"])
 
     return StreamingResponse(
         io.BytesIO(file_bytes),
         media_type=config["content_type"],
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers=secure_download_headers(filename),
     )
 
 
 @router.post("/report")
-def generate_combined_report(deal_id: str, db: Session = Depends(get_db)):
+def generate_combined_report(
+    deal_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     Generate a combined PDF report from all sections.
     This is the final, complete credit pitch book.
@@ -101,15 +112,15 @@ def generate_combined_report(deal_id: str, db: Session = Depends(get_db)):
         deal_id=deal_id,
         action="report.generated",
         subject=f"Combined report for {deal.customer}",
-        user="System",
+        user=current_user.user_id,
     )
     db.add(audit)
     db.commit()
 
-    filename = f"{deal.customer.replace(' ', '_')}_CreditReport.pdf"
+    filename = safe_export_filename(deal.customer, "CreditReport", "pdf")
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers=secure_download_headers(filename),
     )

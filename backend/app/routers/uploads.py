@@ -13,6 +13,7 @@ from app.auth import get_current_user, require_deal_owner
 from app.models.deal import Deal, Section
 from app.models.upload import Upload
 from app.models.user import User
+from app.file_validation import UploadValidationError, validate_uploaded_file
 
 router = APIRouter(tags=["uploads"])
 
@@ -54,8 +55,12 @@ async def create_upload(
         if not file:
             raise HTTPException(status_code=400, detail="File is required for source_type='file'")
         file_bytes = await file.read()
+        try:
+            filename = validate_uploaded_file(file.filename, file_bytes)
+        except UploadValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         upload = await IngestionService.process_file_upload(
-            db, section_id, deal_id, file_bytes, file.filename or "uploaded_file", note
+            db, section_id, deal_id, file_bytes, filename, note
         )
     elif source_type == "url":
         if not url:

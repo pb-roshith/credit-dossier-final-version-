@@ -1,8 +1,16 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { BookOpen, Eye, EyeOff, Loader2, ShieldCheck } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { useAuth } from "@/lib/auth";
+import { PasswordPolicyChecklist } from "@/components/PasswordPolicyChecklist";
+import { SecurityQuestionFields } from "@/components/SecurityQuestionFields";
+import {
+  getAuthConfiguration,
+  getAccountStatus,
+  type AuthConfiguration,
+  type SecurityQuestionResponse,
+  useAuth,
+} from "@/lib/auth";
 
 export const Route = createFileRoute("/login")({
   head: () => ({ meta: [{ title: "Sign in | Credit Pitch Book" }] }),
@@ -10,7 +18,7 @@ export const Route = createFileRoute("/login")({
 });
 
 function LoginPage() {
-  const { login, register, resetPassword } = useAuth();
+  const { login, register, resetPassword, getResetQuestions } = useAuth();
   const navigate = useNavigate();
   const [mode, setMode] = useState<"login" | "register" | "reset">("login");
   const [userId, setUserId] = useState("");
@@ -22,11 +30,67 @@ function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [configuration, setConfiguration] = useState<AuthConfiguration | null>(null);
+  const [securityResponses, setSecurityResponses] = useState<SecurityQuestionResponse[]>([]);
+  const [resetQuestionsLoaded, setResetQuestionsLoaded] = useState(false);
+  const [approvalMessage, setApprovalMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    getAuthConfiguration()
+      .then((result) => {
+        setConfiguration(result);
+        setSecurityResponses(
+          result.security_questions.slice(0, 3).map((question) => ({ question, answer: "" })),
+        );
+      })
+      .catch((requestError) =>
+        setError(
+          requestError instanceof Error ? requestError.message : "Unable to load password policy.",
+        ),
+      );
+  }, []);
+
+  useEffect(() => {
+    setApprovalMessage(null);
+    const normalizedUserId = userId.trim().toLowerCase();
+    if (
+      mode !== "login" ||
+      normalizedUserId.length < 3 ||
+      !/^[a-z0-9._-]+$/.test(normalizedUserId)
+    ) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      getAccountStatus(normalizedUserId)
+        .then((result) =>
+          setApprovalMessage(result.status === "pending" ? (result.message ?? null) : null),
+        )
+        .catch(() => setApprovalMessage(null));
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [mode, userId]);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
     setSuccess(null);
+    if (mode === "reset" && !resetQuestionsLoaded) {
+      setSubmitting(true);
+      try {
+        const questions = await getResetQuestions(userId.trim());
+        setSecurityResponses(questions.map((question) => ({ question, answer: "" })));
+        setResetQuestionsLoaded(true);
+      } catch (requestError) {
+        setError(
+          requestError instanceof Error
+            ? requestError.message
+            : "Unable to load recovery questions.",
+        );
+      } finally {
+        setSubmitting(false);
+      }
+      return;
+    }
     if (mode !== "login" && password !== confirmPassword) {
       setError("New password and confirm password must match.");
       return;
@@ -34,15 +98,18 @@ function LoginPage() {
     setSubmitting(true);
     try {
       if (mode === "login") {
-        await login({ user_id: userId.trim(), password });
+        const loggedIn = await login({ user_id: userId.trim(), password });
+        await navigate({ to: loggedIn.role === "admin" ? "/admin" : "/" });
+        return;
       } else if (mode === "register") {
         await register({
           user_id: userId.trim(),
           password,
           confirm_password: confirmPassword,
           role,
+          security_questions: securityResponses,
         });
-        setSuccess("Account created successfully. You can now sign in.");
+        setSuccess("Account created successfully and sent to the admin queue for approval.");
         setMode("login");
         setPassword("");
         setConfirmPassword("");
@@ -52,6 +119,7 @@ function LoginPage() {
       } else {
         const message = await resetPassword({
           user_id: userId.trim(),
+          security_questions: securityResponses,
           new_password: password,
           confirm_password: confirmPassword,
         });
@@ -63,7 +131,6 @@ function LoginPage() {
         setShowConfirmPassword(false);
         return;
       }
-      await navigate({ to: "/" });
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to continue.");
     } finally {
@@ -78,7 +145,28 @@ function LoginPage() {
     setConfirmPassword("");
     setShowPassword(false);
     setShowConfirmPassword(false);
+    setResetQuestionsLoaded(false);
+    setApprovalMessage(null);
+    if (configuration) {
+      setSecurityResponses(
+        configuration.security_questions.slice(0, 3).map((question) => ({ question, answer: "" })),
+      );
+    }
   }
+
+  function updateSecurityResponse(
+    index: number,
+    field: keyof SecurityQuestionResponse,
+    value: string,
+  ) {
+    setSecurityResponses((current) =>
+      current.map((response, responseIndex) =>
+        responseIndex === index ? { ...response, [field]: value } : response,
+      ),
+    );
+  }
+
+  const showPasswordFields = mode !== "reset" || resetQuestionsLoaded;
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-slate-950 px-4 py-10">
@@ -120,7 +208,9 @@ function LoginPage() {
               ? "Enter your user ID and password to continue."
               : mode === "register"
                 ? "Choose the role that matches your credit workflow."
-                : "Enter your user ID and choose a new password."}
+                : resetQuestionsLoaded
+                  ? "Answer all three recovery questions and choose a new password."
+                  : "Enter your user ID to retrieve your recovery questions."}
           </p>
 
           <form className="mt-7 space-y-4" onSubmit={submit}>
@@ -137,43 +227,51 @@ function LoginPage() {
                 placeholder="Enter your user ID"
               />
             </label>
-            <label className="block space-y-1.5 text-sm font-medium">
-              {mode === "reset" ? "New password" : "Password"}
-              <div className="relative">
-                <input
-                  autoComplete={mode === "login" ? "current-password" : "new-password"}
-                  required
-                  minLength={12}
-                  maxLength={128}
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  onCopy={(event) => event.preventDefault()}
-                  onCut={(event) => event.preventDefault()}
-                  onPaste={(event) => event.preventDefault()}
-                  className="h-11 w-full rounded-md border border-input bg-background px-3 pr-11 font-normal outline-none focus:ring-2 focus:ring-ring"
-                  placeholder={mode === "login" ? "Enter your password" : "Minimum 12 characters"}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((value) => !value)}
-                  className="absolute right-0 top-0 flex h-11 w-11 items-center justify-center text-muted-foreground"
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                >
-                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </button>
-              </div>
-            </label>
+            {showPasswordFields && (
+              <label className="block space-y-1.5 text-sm font-medium">
+                {mode === "reset" ? "New password" : "Password"}
+                <div className="relative">
+                  <input
+                    autoComplete={mode === "login" ? "current-password" : "new-password"}
+                    required
+                    minLength={mode === "login" ? 1 : configuration?.password_policy.min_length}
+                    maxLength={
+                      mode === "login" ? 1024 : (configuration?.password_policy.max_length ?? 1024)
+                    }
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    onCopy={(event) => event.preventDefault()}
+                    onCut={(event) => event.preventDefault()}
+                    onPaste={(event) => event.preventDefault()}
+                    className="h-11 w-full rounded-md border border-input bg-background px-3 pr-11 font-normal outline-none focus:ring-2 focus:ring-ring"
+                    placeholder={
+                      mode === "login"
+                        ? "Enter your password"
+                        : `Minimum ${configuration?.password_policy.min_length ?? "configured"} characters`
+                    }
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((value) => !value)}
+                    className="absolute right-0 top-0 flex h-11 w-11 items-center justify-center text-muted-foreground"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </label>
+            )}
 
-            {mode !== "login" && (
+            {mode !== "login" && showPasswordFields && (
               <label className="block space-y-1.5 text-sm font-medium">
                 Confirm {mode === "reset" ? "new " : ""}password
                 <div className="relative">
                   <input
                     autoComplete="new-password"
                     required
-                    minLength={12}
-                    maxLength={128}
+                    minLength={configuration?.password_policy.min_length}
+                    maxLength={configuration?.password_policy.max_length ?? 1024}
                     type={showConfirmPassword ? "text" : "password"}
                     value={confirmPassword}
                     onChange={(event) => setConfirmPassword(event.target.value)}
@@ -202,19 +300,36 @@ function LoginPage() {
             )}
 
             {mode === "register" && (
-              <label className="block space-y-1.5 text-sm font-medium">
-                Role
-                <select
-                  value={role}
-                  onChange={(event) =>
-                    setRole(event.target.value as "relationship_manager" | "credit_analyst")
-                  }
-                  className="h-11 w-full rounded-md border border-input bg-background px-3 font-normal outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="credit_analyst">Credit Analyst</option>
-                  <option value="relationship_manager">Relationship Manager</option>
-                </select>
-              </label>
+              <>
+                <label className="block space-y-1.5 text-sm font-medium">
+                  Role
+                  <select
+                    value={role}
+                    onChange={(event) =>
+                      setRole(event.target.value as "relationship_manager" | "credit_analyst")
+                    }
+                    className="h-11 w-full rounded-md border border-input bg-background px-3 font-normal outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="credit_analyst">Credit Analyst</option>
+                    <option value="relationship_manager">Relationship Manager</option>
+                  </select>
+                </label>
+                <SecurityQuestionFields
+                  responses={securityResponses}
+                  options={configuration?.security_questions ?? []}
+                  onChange={updateSecurityResponse}
+                  allowCustomQuestions={configuration?.allow_custom_security_questions ?? false}
+                />
+              </>
+            )}
+
+            {mode === "reset" && resetQuestionsLoaded && (
+              <SecurityQuestionFields
+                responses={securityResponses}
+                options={[]}
+                onChange={updateSecurityResponse}
+                questionsReadOnly
+              />
             )}
 
             {mode === "login" && (
@@ -229,16 +344,23 @@ function LoginPage() {
               </div>
             )}
 
-            {mode !== "login" && (
-              <p className="text-xs leading-5 text-muted-foreground">
-                Use at least 12 characters with uppercase, lowercase, a number, and a special
-                character. Copy and paste are disabled for password fields.
-              </p>
+            {mode !== "login" && showPasswordFields && configuration && (
+              <PasswordPolicyChecklist
+                password={password}
+                policy={configuration.password_policy}
+                userId={userId}
+              />
             )}
 
             {error && (
               <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm text-destructive">
                 {error}
+              </div>
+            )}
+
+            {mode === "login" && approvalMessage && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">
+                {approvalMessage}
               </div>
             )}
 
@@ -250,7 +372,7 @@ function LoginPage() {
 
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || (mode !== "login" && !configuration)}
               className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground shadow hover:bg-primary/90 disabled:opacity-60"
             >
               {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -260,7 +382,9 @@ function LoginPage() {
                   ? "Sign in"
                   : mode === "register"
                     ? "Create account"
-                    : "Reset password"}
+                    : resetQuestionsLoaded
+                      ? "Reset password"
+                      : "Continue"}
             </button>
           </form>
 

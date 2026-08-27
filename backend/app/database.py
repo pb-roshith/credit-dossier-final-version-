@@ -4,6 +4,7 @@ Transparently supports SQLite (dev) and PostgreSQL (prod) based on DATABASE_URL.
 """
 
 from sqlalchemy import create_engine, event
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 
 from app.config import settings
@@ -43,9 +44,16 @@ class Base(DeclarativeBase):
 
 # ── Dependency for FastAPI routes ───────────────────────────────
 def get_db():
-    """Yield a database session, close it after the request."""
+    """Yield a database session, rolling back failures and always closing it."""
     db = SessionLocal()
     try:
         yield db
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+    except Exception:
+        # Non-database failures can still leave an open transaction behind.
+        db.rollback()
+        raise
     finally:
         db.close()

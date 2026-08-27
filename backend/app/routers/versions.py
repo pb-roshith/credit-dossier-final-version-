@@ -2,7 +2,6 @@
 
 import io
 import json
-import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -20,6 +19,7 @@ from app.models.user import User
 from app.schemas.deal import VersionCreate, VersionResponse, VersionReviewRequest
 from app.services.deal_service import DealService
 from app.services.export_service import ExportService
+from app.report_security import safe_export_filename, secure_download_headers
 
 router = APIRouter(prefix="/api/deals/{deal_id}/versions", tags=["versions"], dependencies=[Depends(require_deal_owner)])
 
@@ -59,7 +59,7 @@ def approve_version(
     return version
 
 
-@router.get("/{version_id}/download")
+@router.post("/{version_id}/download")
 def download_version(
     deal_id: str,
     version_id: str,
@@ -127,12 +127,11 @@ def download_version(
         raise HTTPException(status_code=500, detail="Version snapshot is invalid") from exc
 
     file_bytes = ExportService.generate_pdf(deal)
-    customer = re.sub(r"[^A-Za-z0-9._-]+", "_", deal.customer).strip("_") or "PitchBook"
-    filename = f'{customer}_{version.id}.pdf'
+    filename = safe_export_filename(deal.customer, version.id, "pdf")
     return StreamingResponse(
         io.BytesIO(file_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers=secure_download_headers(filename),
     )
 
 

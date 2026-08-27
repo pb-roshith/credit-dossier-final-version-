@@ -9,6 +9,24 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, Field, field_validator
 
 
+def _sanitize_failure_metadata(value):
+    """Remove legacy exception text before persisted JSON reaches API clients."""
+    if isinstance(value, list):
+        return [_sanitize_failure_metadata(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    sanitized = {}
+    for key, item in value.items():
+        normalized_key = str(key).casefold()
+        if normalized_key in {"error", "exception", "traceback", "stack", "stack_trace"}:
+            sanitized[key] = "The operation was unavailable." if item else item
+        elif normalized_key == "summary" and isinstance(item, str) and "error" in item.casefold():
+            sanitized[key] = "The assessment was unavailable."
+        else:
+            sanitized[key] = _sanitize_failure_metadata(item)
+    return sanitized
+
+
 # ── Upload (nested — legacy) ───────────────────────────────────
 class UploadBrief(BaseModel):
     id: str
@@ -111,10 +129,10 @@ class SectionResponse(BaseModel):
         """Parse JSON string fields (DB storage) to dict."""
         if isinstance(v, str):
             try:
-                return json.loads(v)
+                return _sanitize_failure_metadata(json.loads(v))
             except (json.JSONDecodeError, TypeError):
                 return None
-        return v
+        return _sanitize_failure_metadata(v)
 
     @field_validator("source_urls", "url_scrape_details", mode="before")
     @classmethod
@@ -122,10 +140,10 @@ class SectionResponse(BaseModel):
         if isinstance(v, str):
             try:
                 parsed = json.loads(v)
-                return parsed if isinstance(parsed, list) else []
+                return _sanitize_failure_metadata(parsed) if isinstance(parsed, list) else []
             except (json.JSONDecodeError, TypeError):
                 return []
-        return v or []
+        return _sanitize_failure_metadata(v or [])
 
 
 class SectionUpdate(BaseModel):
@@ -219,6 +237,12 @@ class DealCreate(BaseModel):
     repayment: str = ""
     collateral: bool = False
     due: str = ""
+
+
+class DealSearchRequest(BaseModel):
+    """Filters sent in a POST body so customer searches never enter URLs/logs."""
+    status: Optional[str] = Field(default=None, max_length=32)
+    search: Optional[str] = Field(default=None, max_length=256)
 
 
 class DealUpdate(BaseModel):

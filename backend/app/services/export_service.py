@@ -9,6 +9,7 @@ import io
 import logging
 import re
 import base64
+import html
 from datetime import datetime
 
 import markdown
@@ -22,6 +23,7 @@ from xhtml2pdf import pisa
 from html2docx import html2docx
 
 from app.models.deal import Deal, Section
+from app.security import mask_sensitive_text
 
 logger = logging.getLogger(__name__)
 
@@ -83,10 +85,13 @@ def _section_narrative(section: Section) -> str:
         flags=re.IGNORECASE | re.DOTALL,
     )
     content = re.sub(r"\[(?:\d{1,2})(?:\s*,\s*\d{1,2})*\]", "", content)
-    return content.strip()
+    return mask_sensitive_text(content.strip())
 
 def _markdown_to_html_with_graphs(text: str, theme_palette: list[str]) -> str:
     """Detects numeric markdown tables, injects matplotlib charts, and converts to HTML."""
+    # Preserve Markdown while rendering any embedded HTML inert. Locally
+    # generated chart tags are inserted only after this escaping step.
+    text = html.escape(text, quote=False)
     table_pattern = re.compile(r'(^[ \t]*\|[^\n]+\|[ \t]*\n[ \t]*\|[-:| ]+\|[ \t]*\n(?:[ \t]*\|[^\n]+\|[ \t]*(?:\n|$))+)', re.MULTILINE)
     
     def replacer(match):
@@ -191,16 +196,23 @@ class ExportService:
             if s.state == "ready" and _section_narrative(s).strip()
         ]
 
-        # Use the deal's dynamic theme colors, handling None or empty strings
-        p_color = getattr(deal, "primary_color", None) or "#002060"
-        s_color = getattr(deal, "secondary_color", None) or "#800020"
+        def safe_color(value: object, fallback: str) -> str:
+            candidate = str(value or "")
+            return candidate if re.fullmatch(r"#[0-9A-Fa-f]{6}", candidate) else fallback
+
+        def safe_text(value: object) -> str:
+            return html.escape(mask_sensitive_text(str(value or "")))
+
+        p_color = safe_color(getattr(deal, "primary_color", None), "#002060")
+        s_color = safe_color(getattr(deal, "secondary_color", None), "#800020")
         
         # Parse full palette
         import json
         raw_palette = getattr(deal, "theme_palette", None)
         if raw_palette:
             try:
-                theme_palette = json.loads(raw_palette)
+                parsed_palette = json.loads(raw_palette)
+                theme_palette = [safe_color(color, "#64748b") for color in parsed_palette[:8]]
             except Exception:
                 theme_palette = [p_color, s_color, "#1e293b", "#3b82f6", "#f59e0b"]
         else:
@@ -210,10 +222,11 @@ class ExportService:
         
         # Cover
         html_parts.append(f"<h1 style='text-align: center; font-size: 32pt; font-weight: bold; margin-top: 200px; color: {p_color};'>CREDIT PITCH BOOK</h1>")
-        html_parts.append(f"<h2 style='text-align: center; font-size: 22pt; margin-top: 10px; color: {s_color};'>{deal.customer}</h2>")
-        html_parts.append(f"<p style='text-align: center; color: #64748b; font-size: 14pt; margin-top: 30px;'>{deal.industry} | {deal.segment} | {deal.geography}</p>")
-        html_parts.append(f"<p style='text-align: center; color: #64748b; font-size: 14pt;'>Facility: {deal.facility} — {_format_amount(deal.amount, deal.currency)}</p>")
+        html_parts.append(f"<h2 style='text-align: center; font-size: 22pt; margin-top: 10px; color: {s_color};'>{safe_text(deal.customer)}</h2>")
+        html_parts.append(f"<p style='text-align: center; color: #64748b; font-size: 14pt; margin-top: 30px;'>{safe_text(deal.industry)} | {safe_text(deal.segment)} | {safe_text(deal.geography)}</p>")
+        html_parts.append(f"<p style='text-align: center; color: #64748b; font-size: 14pt;'>Facility: {safe_text(deal.facility)} — {safe_text(_format_amount(deal.amount, deal.currency))}</p>")
         html_parts.append(f"<p style='text-align: center; color: #94a3b8; font-size: 11pt; margin-top: 80px;'>Generated: {datetime.now().strftime('%B %d, %Y')}</p>")
+        html_parts.append("<p style='text-align: center; color: #991b1b; font-size: 10pt;'><strong>CONFIDENTIAL — INTERNAL USE ONLY</strong></p>")
         
         page_break = "<pdf:nextpage />" if for_pdf else "<br/><br/><br/>"
         html_parts.append(page_break)
@@ -221,7 +234,7 @@ class ExportService:
         # TOC
         html_parts.append(f"<h2 style='color: {p_color}; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px;'>TABLE OF CONTENTS</h2><ul style='list-style-type: none; padding-left: 0;'>")
         for i, section in enumerate(valid_sections, 1):
-            html_parts.append(f"<li style='margin-bottom: 12px; font-size: 12pt; color: #334155;'><strong style='color: {p_color};'>{i}.</strong> {section.title}</li>")
+            html_parts.append(f"<li style='margin-bottom: 12px; font-size: 12pt; color: #334155;'><strong style='color: {p_color};'>{i}.</strong> {safe_text(section.title)}</li>")
         html_parts.append("</ul>")
         html_parts.append(page_break)
 
@@ -247,13 +260,13 @@ class ExportService:
         ]
         
         for k, v in summary_items:
-            html_parts.append(f"<tr><td style='background-color: #f8fafc;'><strong style='color: #334155;'>{k}</strong></td><td>{v}</td></tr>")
+            html_parts.append(f"<tr><td style='background-color: #f8fafc;'><strong style='color: #334155;'>{safe_text(k)}</strong></td><td>{safe_text(v)}</td></tr>")
         html_parts.append("</table>")
         html_parts.append(page_break)
 
         # Sections
         for i, section in enumerate(valid_sections, 1):
-            html_parts.append(f"<h2 style='color: {p_color}; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;'>{i}. {section.title}</h2>")
+            html_parts.append(f"<h2 style='color: {p_color}; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;'>{i}. {safe_text(section.title)}</h2>")
             clean_content = _clean_unprintable_chars(_section_narrative(section))
             content_html = _markdown_to_html_with_graphs(clean_content, theme_palette)
             html_parts.append(content_html)
@@ -306,26 +319,31 @@ class ExportService:
     def generate_docx(deal: Deal) -> bytes:
         """Generate a formatted DOCX with embedded graphs using html2docx."""
         html = ExportService._generate_html_document(deal, for_pdf=False)
-        buffer = html2docx(html, title=f"{deal.customer} Credit Pitch Book")
-        return buffer.getvalue()
+        buffer = html2docx(html, title="Confidential Credit Pitch Book")
+        from docx import Document
+        document = Document(buffer)
+        document.core_properties.author = ""
+        document.core_properties.last_modified_by = ""
+        document.core_properties.comments = "CONFIDENTIAL - INTERNAL USE ONLY"
+        secured = io.BytesIO()
+        document.save(secured)
+        return secured.getvalue()
 
     @staticmethod
     async def generate_pptx(deal: Deal) -> bytes:
-        """Generate a well-designed PPTX pitch book using Mistral for formatting."""
+        """Generate a local-only PPTX without disclosing report data externally."""
         from pptx import Presentation
         from pptx.util import Inches, Pt
         from pptx.dml.color import RGBColor
         from pptx.enum.text import PP_ALIGN
-        import json
-        import urllib.request
-        import urllib.parse
         import asyncio
-        import httpx
         import re
-        from app.services.mistral_library_service import _get_client, _call_with_retry
-        from app.config import settings
 
         prs = Presentation()
+        prs.core_properties.title = "Confidential Credit Pitch Book"
+        prs.core_properties.author = ""
+        prs.core_properties.last_modified_by = ""
+        prs.core_properties.comments = "CONFIDENTIAL - INTERNAL USE ONLY"
         prs.slide_width = Inches(13.333)
         prs.slide_height = Inches(7.5)
 
@@ -338,9 +356,9 @@ class ExportService:
 
         # Convert hex (e.g. "#002060") to RGBColor
         def hex_to_rgb(hex_str: str) -> RGBColor:
-            hex_str = hex_str.lstrip('#')
-            if len(hex_str) != 6:
+            if not re.fullmatch(r"#[0-9A-Fa-f]{6}", str(hex_str)):
                 return RGBColor(0, 0, 0)
+            hex_str = hex_str.lstrip('#')
             return RGBColor(int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16))
 
         primary_rgb = hex_to_rgb(p_color)
@@ -364,7 +382,7 @@ class ExportService:
         txBox2 = slide.shapes.add_textbox(Inches(1), Inches(3.5), Inches(11), Inches(1))
         tf2 = txBox2.text_frame
         p2 = tf2.paragraphs[0]
-        p2.text = deal.customer
+        p2.text = mask_sensitive_text(deal.customer)
         p2.font.size = Pt(28)
         p2.font.color.rgb = secondary_rgb
         p2.alignment = PP_ALIGN.CENTER
@@ -373,24 +391,6 @@ class ExportService:
             s for s in sorted(deal.sections, key=lambda x: x.order_index) 
             if s.state == "ready" and _section_narrative(s).strip()
         ]
-
-        client = _get_client()
-
-        system_prompt = """
-        You are an expert presentation designer. Convert the following text into a well-designed presentation format.
-        Return ONLY valid JSON with this exact schema:
-        {
-          "slides": [
-            {
-              "title": "Main point title",
-              "bullet_points": ["Summarized point 1", "Summarized point 2"],
-              "image_prompt": "A keyword or short prompt for an image representing the slide (e.g. 'finance graph', 'factory building', 'corporate team'), or null if no image is needed."
-            }
-          ]
-        }
-        Do not output any markdown code blocks, just the raw JSON.
-        Make it brief and concise, 1-2 slides maximum depending on content length.
-        """
 
         table_pattern = re.compile(r'(^[ \t]*\|[^\n]+\|[ \t]*\n[ \t]*\|[-:| ]+\|[ \t]*\n(?:[ \t]*\|[^\n]+\|[ \t]*(?:\n|$))+)', re.MULTILINE)
         sem = asyncio.Semaphore(5)
@@ -456,36 +456,16 @@ class ExportService:
                             if rows:
                                 native_tables.append((headers, rows))
                 
-                try:
-                    response = await _call_with_retry(
-                        lambda sec=section: client.chat.complete_async(
-                            model=settings.MISTRAL_MODEL,
-                            messages=[
-                                {"role": "system", "content": system_prompt},
-                                {"role": "user", "content": f"Section: {sec.title}\n\nContent:\n{_section_narrative(sec)}"}
-                            ],
-                            temperature=0.2,
-                            response_format={"type": "json_object"}
-                        ),
-                        description=f"PPT slide generation for '{section.title}'",
-                    )
-                    
-                    raw = response.choices[0].message.content or "{}"
-                    if raw.startswith("```"):
-                        lines = raw.split("\n")
-                        lines = [l for l in lines if not l.strip().startswith("```")]
-                        raw = "\n".join(lines).strip()
-                    
-                    slide_data = json.loads(raw)
-                    slides_list = slide_data.get("slides", [])
-                    
-                except Exception as e:
-                    logger.error(f"Failed to generate slides for {section.title}: {e}")
-                    slides_list = [{
-                        "title": section.title,
-                        "bullet_points": [content[:500] + "..."],
-                        "image_prompt": None
-                    }]
+                paragraphs = [
+                    re.sub(r"^[#>*\-\s]+", "", part).strip()
+                    for part in re.split(r"\n\s*\n|\n(?=[*-]\s)", table_pattern.sub("", content))
+                    if part.strip()
+                ]
+                slides_list = [{
+                    "title": section.title,
+                    "bullet_points": paragraphs[:6] or ["No narrative content available."],
+                    "image_prompt": None,
+                }]
 
                 # Allocate generated charts to slides instead of fetching AI images
                 for i, slide_info in enumerate(slides_list):
@@ -494,22 +474,6 @@ class ExportService:
                         slide_info["img_bytes"] = charts[i]
                         slide_info["image_prompt"] = None
 
-                # Fetch AI images only if no chart was assigned
-                async with httpx.AsyncClient(timeout=15.0) as http_client:
-                    for slide_info in slides_list:
-                        if slide_info["img_bytes"] is not None:
-                            continue
-                        img_prompt = slide_info.get("image_prompt")
-                        if img_prompt and str(img_prompt).lower() not in ["null", "none"]:
-                            try:
-                                safe_prompt = urllib.parse.quote(str(img_prompt))
-                                img_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=400&height=300&nologo=true"
-                                resp = await http_client.get(img_url, headers={'User-Agent': 'Mozilla/5.0'})
-                                if resp.status_code == 200:
-                                    slide_info["img_bytes"] = resp.content
-                            except Exception as e:
-                                logger.warning(f"Failed to fetch image for prompt '{img_prompt}': {e}")
-                                
                 return section, slides_list, native_tables
 
         tasks = [process_section(sec) for sec in valid_sections]

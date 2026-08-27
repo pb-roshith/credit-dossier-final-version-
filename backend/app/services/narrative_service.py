@@ -861,14 +861,14 @@ class NarrativeService:
                         "total_ms": round(total_ms),
                     },
                 }
-            except Exception as e:
-                logger.error(f"Failed to draft section {section.section_key}: {e}")
-                report("failed", str(e))
+            except Exception:
+                logger.exception("Failed to draft section %s", section.section_key)
+                report("failed", "Section generation failed.")
                 return {
                     "section_id": section.id,
                     "section_key": section.section_key,
                     "title": section.title,
-                    "generated_content": f"[Generation failed: {str(e)}]",
+                    "generated_content": "[Section generation failed.]",
                     "state": "pending",
                     "success": False,
                     "agent": "N/A",

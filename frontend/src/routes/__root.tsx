@@ -38,7 +38,7 @@ function NotFoundComponent() {
 }
 
 function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
-  console.error(error);
+  if (import.meta.env.DEV) console.error(error);
   const router = useRouter();
 
   return (
@@ -129,14 +129,29 @@ function AuthenticatedApp() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const navigate = useNavigate();
   const isLogin = pathname === "/login";
+  const isAdminDashboard = pathname === "/admin";
+  const isProfile = pathname === "/profile";
+  const adminOutsideAllowedPages =
+    user?.role === "admin" && !isLogin && !isAdminDashboard && !isProfile;
+  const nonAdminOnAdminDashboard = Boolean(user && user.role !== "admin" && isAdminDashboard);
 
   useEffect(() => {
     if (loading) return;
     if (!user && !isLogin) void navigate({ to: "/login", replace: true });
-    if (user && isLogin) void navigate({ to: "/", replace: true });
-  }, [user, loading, isLogin, navigate]);
+    if (user && isLogin) {
+      void navigate({ to: user.role === "admin" ? "/admin" : "/", replace: true });
+    }
+    if (adminOutsideAllowedPages) void navigate({ to: "/admin", replace: true });
+    if (nonAdminOnAdminDashboard) void navigate({ to: "/", replace: true });
+  }, [user, loading, isLogin, adminOutsideAllowedPages, nonAdminOnAdminDashboard, navigate]);
 
-  if (loading || (!user && !isLogin) || (user && isLogin)) {
+  if (
+    loading ||
+    (!user && !isLogin) ||
+    (user && isLogin) ||
+    adminOutsideAllowedPages ||
+    nonAdminOnAdminDashboard
+  ) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface">
         <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />

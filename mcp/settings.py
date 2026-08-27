@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,6 +13,13 @@ from dotenv import load_dotenv
 MCP_DIR = Path(__file__).resolve().parent
 load_dotenv(MCP_DIR.parent / "backend" / ".env")
 load_dotenv(MCP_DIR / ".env", override=True)
+
+BACKEND_DIR = MCP_DIR.parent / "backend"
+if str(BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(BACKEND_DIR))
+from app.local_secrets import load_into_environment  # noqa: E402
+
+load_into_environment("mcp", overwrite=True)
 
 
 @dataclass(frozen=True)

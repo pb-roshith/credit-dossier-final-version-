@@ -323,7 +323,7 @@ class IngestionService:
                 source_type="url",
                 url=url,
                 note=note,
-                extracted_text=f"[Failed to fetch URL: {e}]",
+                extracted_text="[The URL could not be retrieved or processed.]",
                 extraction_method="error",
             )
             db.add(doc)
@@ -525,7 +525,7 @@ class IngestionService:
                     )
         except Exception as e:
             logger.error(f"Failed to fetch URL {url}: {e}")
-            extracted = f"[Failed to fetch URL: {e}]"
+            extracted = "[The URL could not be retrieved or processed.]"
 
         upload = Upload(
             section_id=section_id,

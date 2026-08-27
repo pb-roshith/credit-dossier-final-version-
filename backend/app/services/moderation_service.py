@@ -181,7 +181,7 @@ class ModerationService:
             # (fail-open policy — can be changed to fail-closed)
             return ModerationResult(
                 is_safe=True,
-                details={"error": str(e)},
+                details={"error": "Content moderation was temporarily unavailable."},
                 latency_ms=(time.perf_counter() - started_at) * 1000,
             )
 

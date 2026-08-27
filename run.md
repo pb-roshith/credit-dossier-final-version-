@@ -91,5 +91,4 @@ The Mistral path makes multiple detailed-generation calls, so a complete
 17-document run can take several minutes. Running the same company again
 refreshes older PDFs and all 16 PostgreSQL datasets.
 
-
 Test link (pqrs client ,ration analysis) - [dpaste.com/6E6QD7PTX](https://dpaste.com/6E6QD7PTX)

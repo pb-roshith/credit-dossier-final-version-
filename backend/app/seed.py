@@ -5,6 +5,8 @@ Database seeding — creates initial demo deals if the DB is empty.
 import logging
 from datetime import datetime, timezone
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.database import SessionLocal
 from app.models.deal import Deal, Section, AuditEntry
 from app.services.deal_service import DEFAULT_SECTIONS
@@ -122,8 +124,8 @@ def seed_if_empty():
 
         db.commit()
         logger.info(f"Seeded {len(SEED_DEALS)} demo deals.")
-    except Exception as e:
-        logger.error(f"Seeding failed: {e}")
+    except SQLAlchemyError:
+        logger.exception("Database failure while seeding demo deals.")
         db.rollback()
     finally:
         db.close()

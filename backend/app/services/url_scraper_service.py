@@ -195,7 +195,7 @@ async def scrape_urls(urls: list[str]) -> tuple[str, list[dict[str, object]]]:
                         "title": "",
                         "status": "failed",
                         "characters": 0,
-                        "error": str(exc),
+                        "error": "The URL could not be retrieved or processed.",
                     }
                 )
 

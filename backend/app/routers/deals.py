@@ -2,7 +2,7 @@
 Deals API router — CRUD operations for deals.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
 from sqlalchemy.orm import Session
 import pypdf
 import io
@@ -10,7 +10,7 @@ import io
 from app.database import get_db
 from app.agents.theme_agent import extract_theme_from_document_bytes
 from app.schemas.deal import (
-    DealCreate, DealUpdate, DealResponse, DealListResponse,
+    DealCreate, DealUpdate, DealResponse, DealListResponse, DealSearchRequest,
 )
 from app.services.deal_service import DealService
 from app.services.mistral_library_service import MistralLibraryService
@@ -18,6 +18,7 @@ from app.services.mcp_service import MCPClientService
 from app.services.library_sync_service import LibrarySyncService
 from app.auth import get_current_user, require_deal_owner, require_relationship_manager
 from app.models.user import User
+from app.file_validation import THEME_EXTENSIONS, UploadValidationError, validate_uploaded_file
 import httpx
 import logging
 
@@ -26,14 +27,49 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/deals", tags=["deals"])
 
 
+async def _delete_library_after_deal(library_id: str) -> None:
+    deleted = await MistralLibraryService.delete_library(library_id)
+    if not deleted:
+        logger.error("Background deletion failed for Mistral library %s", library_id)
+
+
+async def _refresh_company_documents(deal_id: str) -> None:
+    result = await LibrarySyncService.check_for_new_documents(deal_id)
+    total_documents = result.get("total_mcp")
+    if not isinstance(total_documents, int) or total_documents < 0:
+        raise RuntimeError("Company-document refresh returned an invalid document count.")
+    logger.info(
+        "Company-document refresh completed for deal %s with %s document(s).",
+        deal_id,
+        total_documents,
+    )
+
+
 @router.get("", response_model=list[DealListResponse])
 def list_deals(
-    status: str | None = Query(None, description="Filter by status"),
-    search: str | None = Query(None, description="Search by customer name"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List all deals with optional status and search filters."""
+    """List all deals. Submit filters to POST /search, never in a URL."""
+    return _list_deals(db, current_user)
+
+
+@router.post("/search", response_model=list[DealListResponse])
+def search_deals(
+    filters: DealSearchRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Search deals using a bounded JSON request body."""
+    return _list_deals(db, current_user, filters.status, filters.search)
+
+
+def _list_deals(
+    db: Session,
+    current_user: User,
+    status: str | None = None,
+    search: str | None = None,
+):
     deals = DealService.list_deals(db, current_user, status=status, search=search)
     result = []
     for deal in deals:
@@ -78,7 +114,7 @@ def get_deal(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depe
     # Resolve a new deal once. Subsequent refreshes are explicit, preventing
     # frontend polling from continuously restarting the same remote operation.
     if deal.library_sync_status == "not_started":
-        background_tasks.add_task(LibrarySyncService.check_for_new_documents, deal.id)
+        background_tasks.add_task(_refresh_company_documents, deal.id)
         
     return deal
 
@@ -106,7 +142,7 @@ def get_library_sync_status(deal_id: str, db: Session = Depends(get_db)):
             "doc_title": log.doc_title,
             "doc_url": log.doc_url,
             "status": log.status,
-            "error": log.error,
+            "error": "Document synchronization failed." if log.error else None,
             "file_size": log.file_size,
             "created_at": log.created_at,
             "started_at": log.started_at,
@@ -150,17 +186,24 @@ async def extract_theme_from_document(deal_id: str, file: UploadFile = File(...)
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
 
+    content = await file.read()
     try:
-        content = await file.read()
+        filename = validate_uploaded_file(
+            file.filename, content, allowed_extensions=THEME_EXTENSIONS
+        )
+    except UploadValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
         text = ""
-        if file.filename and file.filename.lower().endswith(".pdf"):
+        if filename.lower().endswith(".pdf"):
             reader = pypdf.PdfReader(io.BytesIO(content))
             for page in reader.pages[:10]:  # Read first 10 pages for theme
                 text += page.extract_text() + "\n"
         else:
             text = content.decode("utf-8", errors="ignore")
             
-        theme_resp = extract_theme_from_document_bytes(content, file.filename or "doc.pdf")
+        theme_resp = extract_theme_from_document_bytes(content, filename)
         if theme_resp:
             import json
             deal = DealService.update_deal(
@@ -177,8 +220,14 @@ async def extract_theme_from_document(deal_id: str, file: UploadFile = File(...)
             
         full_deal = DealService.get_deal(db, deal.id)
         return full_deal
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
+    except (pypdf.errors.PdfReadError, UnicodeError) as exc:
+        logger.warning("Theme source could not be parsed: %s", exc)
+        raise HTTPException(status_code=400, detail="The theme source could not be parsed.") from exc
+    except Exception as exc:
+        logger.exception("Unexpected theme extraction failure for deal %s", deal_id)
+        raise HTTPException(status_code=500, detail="Theme extraction failed unexpectedly.") from exc
 
 
 @router.delete("/{deal_id}", status_code=204, dependencies=[Depends(require_deal_owner)])
@@ -194,4 +243,4 @@ def delete_deal(deal_id: str, background_tasks: BackgroundTasks, db: Session = D
         raise HTTPException(status_code=404, detail="Deal not found")
         
     if library_id:
-        background_tasks.add_task(MistralLibraryService.delete_library, library_id)
+        background_tasks.add_task(_delete_library_after_deal, library_id)

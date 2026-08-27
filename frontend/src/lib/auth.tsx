@@ -7,16 +7,36 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { apiErrorFromResponse } from "@/lib/api-error";
 
 export type AuthUser = {
   user_id: string;
-  role: "relationship_manager" | "credit_analyst";
+  role: "relationship_manager" | "credit_analyst" | "admin";
 };
+
+export type PasswordPolicy = {
+  min_length: number;
+  max_length: number;
+  min_uppercase: number;
+  min_lowercase: number;
+  min_digits: number;
+  min_special: number;
+};
+
+export type AuthConfiguration = {
+  password_policy: PasswordPolicy;
+  security_questions: string[];
+  required_security_questions: 3;
+  allow_custom_security_questions: boolean;
+};
+
+export type SecurityQuestionResponse = { question: string; answer: string };
 
 type LoginInput = { user_id: string; password: string };
 type RegisterInput = LoginInput & {
   confirm_password: string;
-  role: AuthUser["role"];
+  role: Exclude<AuthUser["role"], "admin">;
+  security_questions: SecurityQuestionResponse[];
 };
 type ChangePasswordInput = {
   current_password: string;
@@ -25,8 +45,13 @@ type ChangePasswordInput = {
 };
 type ResetPasswordInput = {
   user_id: string;
+  security_questions: SecurityQuestionResponse[];
   new_password: string;
   confirm_password: string;
+};
+type ConfigureSecurityQuestionsInput = {
+  current_password: string;
+  security_questions: SecurityQuestionResponse[];
 };
 
 type AuthContextValue = {
@@ -37,6 +62,8 @@ type AuthContextValue = {
   logout: () => Promise<void>;
   changePassword: (input: ChangePasswordInput) => Promise<string>;
   resetPassword: (input: ResetPasswordInput) => Promise<string>;
+  getResetQuestions: (userId: string) => Promise<string[]>;
+  configureSecurityQuestions: (input: ConfigureSecurityQuestionsInput) => Promise<string>;
   refresh: () => Promise<void>;
 };
 
@@ -52,11 +79,30 @@ async function authRequest<T>(url: string, options?: RequestInit): Promise<T> {
     },
   });
   if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    throw new Error(body?.detail || `Request failed (${response.status}).`);
+    throw await apiErrorFromResponse(response);
   }
   if (response.status === 204) return undefined as T;
   return response.json();
+}
+
+// This API helper intentionally lives beside the authentication provider.
+// eslint-disable-next-line react-refresh/only-export-components
+export async function getAuthConfiguration(): Promise<AuthConfiguration> {
+  return authRequest<AuthConfiguration>("/api/auth/configuration");
+}
+
+// This API helper intentionally lives beside the authentication provider.
+// eslint-disable-next-line react-refresh/only-export-components
+export async function getAccountStatus(
+  userId: string,
+): Promise<{ status: "pending" | "not_pending"; message?: string }> {
+  return authRequest<{ status: "pending" | "not_pending"; message?: string }>(
+    "/api/auth/account-status",
+    {
+      method: "POST",
+      body: JSON.stringify({ user_id: userId }),
+    },
+  );
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -114,6 +160,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return result.message;
   }, []);
 
+  const getResetQuestions = useCallback(async (userId: string) => {
+    const result = await authRequest<{ questions: string[] }>(
+      "/api/auth/reset-password/questions",
+      {
+        method: "POST",
+        body: JSON.stringify({ user_id: userId }),
+      },
+    );
+    return result.questions;
+  }, []);
+
+  const configureSecurityQuestions = useCallback(async (input: ConfigureSecurityQuestionsInput) => {
+    const result = await authRequest<{ message: string }>("/api/auth/security-questions", {
+      method: "PUT",
+      body: JSON.stringify(input),
+    });
+    return result.message;
+  }, []);
+
   const logout = useCallback(async () => {
     try {
       await authRequest<void>("/api/auth/logout", { method: "POST" });
@@ -123,8 +188,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, login, register, logout, changePassword, resetPassword, refresh }),
-    [user, loading, login, register, logout, changePassword, resetPassword, refresh],
+    () => ({
+      user,
+      loading,
+      login,
+      register,
+      logout,
+      changePassword,
+      resetPassword,
+      getResetQuestions,
+      configureSecurityQuestions,
+      refresh,
+    }),
+    [
+      user,
+      loading,
+      login,
+      register,
+      logout,
+      changePassword,
+      resetPassword,
+      getResetQuestions,
+      configureSecurityQuestions,
+      refresh,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

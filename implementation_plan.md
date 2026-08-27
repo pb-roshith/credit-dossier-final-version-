@@ -13,7 +13,7 @@ Status labels:
 | Area | Status | Current behavior |
 |---|---|---|
 | Deal workflow | Implemented | Create, edit, delete, filter, generate, submit, review, and export |
-| Authentication | Implemented | PBKDF2 passwords, 12-hour server sessions, registration/reset/change/logout |
+| Authentication | Implemented | PBKDF2 passwords, role-based 30/15-minute server sessions, registration/reset/change/logout |
 | Authorization | Implemented | RM ownership and submission; analyst global review and approve/deny |
 | Section generation | Implemented | 16 section agents, orchestration, single/selected/all generation |
 | Grounding | Implemented | Company library + deal library + MCP PostgreSQL tables + section URLs |

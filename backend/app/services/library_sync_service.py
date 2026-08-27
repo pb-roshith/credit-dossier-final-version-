@@ -8,6 +8,8 @@ import logging
 import threading
 from datetime import datetime, timezone
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.database import SessionLocal
 from app.models.deal import Deal
 from app.models.library_sync_log import LibrarySyncLog
@@ -156,22 +158,31 @@ class LibrarySyncService:
             deal.library_sync_status = "ready"
             db.commit()
 
-            await MistralLibraryService.remove_legacy_mcp_copies(db, deal)
+            removed_legacy_copies = await MistralLibraryService.remove_legacy_mcp_copies(db, deal)
+            logger.info(
+                "Removed %s legacy company-document copy/copies for deal %s.",
+                removed_legacy_copies,
+                deal_id,
+            )
             logger.info(
                 "Linked %s company documents from Mistral Library %s to deal %s",
                 len(documents),
                 company_library_id,
                 deal.id,
             )
-        except Exception as exc:
-            logger.error("Company-library link error for %s: %s", deal_id, exc)
+        except SQLAlchemyError:
+            db.rollback()
+            logger.exception("Database failure during company-library link for %s", deal_id)
+        except Exception:
+            logger.exception("External or unexpected company-library link error for %s", deal_id)
             try:
                 deal = db.query(Deal).filter(Deal.id == deal_id).first()
                 if deal:
                     deal.library_sync_status = "error"
                     db.commit()
-            except Exception:
+            except SQLAlchemyError:
                 db.rollback()
+                logger.exception("Unable to persist library-sync failure state for %s", deal_id)
         finally:
             db.close()
             with _active_syncs_lock:

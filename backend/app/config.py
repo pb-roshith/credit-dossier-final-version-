@@ -4,7 +4,14 @@ Supports both SQLite (local dev) and PostgreSQL (production) via DATABASE_URL.
 """
 
 from pathlib import Path
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.local_secrets import load_into_environment
+
+
+# Encrypted local values override plaintext environment/configuration values.
+load_into_environment("backend", overwrite=True)
 
 
 class Settings(BaseSettings):
@@ -29,6 +36,10 @@ class Settings(BaseSettings):
     # ── Application ─────────────────────────────────────────────
     APP_ENV: str = "development"
     UPLOAD_DIR: str = "./uploads"
+    CORS_ALLOWED_ORIGINS: str = (
+        "http://localhost:8080|http://localhost:5173|http://localhost:3000|"
+        "http://127.0.0.1:8080|http://127.0.0.1:5173"
+    )
 
     # ── Orchestration ──────────────────────────────────────────
     ORCHESTRATION_ENABLED: bool = True
@@ -46,12 +57,87 @@ class Settings(BaseSettings):
 
     # ── Production ─────────────────────────────────────────────
     ENABLE_TIMING_METRICS: bool = True
+    # Trust X-Forwarded-For only when a trusted reverse proxy overwrites it.
+    AUDIT_TRUST_X_FORWARDED_FOR: bool = False
+
+    # Report security. On Windows the generated HMAC key is persisted only in
+    # DPAPI-protected form. Other production hosts must inject a base64 key
+    # from their OS/cloud secret manager through REPORT_TOKENIZATION_KEY.
+    REPORT_MASK_SENSITIVE_DATA: bool = True
+    REPORT_TOKENIZATION_KEY: str = ""
+    DPAPI_KEY_FILE: str = "./.data/report-tokenization-key.dpapi"
 
     # Initial local accounts. Override these values in backend/.env.
     INITIAL_RELATIONSHIP_MANAGER_USER_ID: str = "manager"
     INITIAL_RELATIONSHIP_MANAGER_PASSWORD: str = ""
     INITIAL_CREDIT_ANALYST_USER_ID: str = "analyst"
     INITIAL_CREDIT_ANALYST_PASSWORD: str = ""
+    INITIAL_ADMIN_USER_ID: str = "admin"
+    INITIAL_ADMIN_PASSWORD: str = ""
+
+    # Absolute session lifetimes. Business roles may not exceed 30 minutes;
+    # administrators must use a shorter lifetime of at most 15 minutes.
+    SESSION_TIMEOUT_RELATIONSHIP_MANAGER_MINUTES: int = 30
+    SESSION_TIMEOUT_CREDIT_ANALYST_MINUTES: int = 30
+    SESSION_TIMEOUT_ADMIN_MINUTES: int = 15
+
+    # Authentication policy. SECURITY_QUESTIONS uses | as the separator so it
+    # is convenient to override in a .env file.
+    PASSWORD_MIN_LENGTH: int = 12
+    PASSWORD_MAX_LENGTH: int = 128
+    PASSWORD_MIN_UPPERCASE: int = 1
+    PASSWORD_MIN_LOWERCASE: int = 1
+    PASSWORD_MIN_DIGITS: int = 1
+    PASSWORD_MIN_SPECIAL: int = 1
+    SECURITY_QUESTIONS: str = (
+        "What was the name of your first school?|"
+        "What city were you born in?|"
+        "What was the name of your first pet?|"
+        "What is your oldest sibling's middle name?|"
+        "What was the make of your first car?|"
+        "What is the name of the street where you grew up?"
+    )
+
+    @model_validator(mode="after")
+    def validate_authentication_configuration(self):
+        if not 1 <= self.SESSION_TIMEOUT_RELATIONSHIP_MANAGER_MINUTES <= 30:
+            raise ValueError("Relationship Manager sessions must be between 1 and 30 minutes.")
+        if not 1 <= self.SESSION_TIMEOUT_CREDIT_ANALYST_MINUTES <= 30:
+            raise ValueError("Credit Analyst sessions must be between 1 and 30 minutes.")
+        if not 1 <= self.SESSION_TIMEOUT_ADMIN_MINUTES <= 15:
+            raise ValueError("Administrator sessions must be between 1 and 15 minutes.")
+        if self.SESSION_TIMEOUT_ADMIN_MINUTES >= min(
+            self.SESSION_TIMEOUT_RELATIONSHIP_MANAGER_MINUTES,
+            self.SESSION_TIMEOUT_CREDIT_ANALYST_MINUTES,
+        ):
+            raise ValueError("Administrator sessions must be shorter than business-role sessions.")
+        if not 1 <= self.PASSWORD_MIN_LENGTH <= self.PASSWORD_MAX_LENGTH <= 1024:
+            raise ValueError(
+                "Password lengths must satisfy 1 <= minimum <= maximum <= 1024."
+            )
+        character_counts = (
+            self.PASSWORD_MIN_UPPERCASE,
+            self.PASSWORD_MIN_LOWERCASE,
+            self.PASSWORD_MIN_DIGITS,
+            self.PASSWORD_MIN_SPECIAL,
+        )
+        if any(count < 0 for count in character_counts):
+            raise ValueError("Password character requirements cannot be negative.")
+        if sum(character_counts) > self.PASSWORD_MAX_LENGTH:
+            raise ValueError(
+                "Password character requirements cannot exceed the maximum length."
+            )
+        if len(self.security_question_options) < 3:
+            raise ValueError("Configure at least three unique security questions.")
+        return self
+
+    @property
+    def security_question_options(self) -> list[str]:
+        return list(dict.fromkeys(
+            question.strip()
+            for question in self.SECURITY_QUESTIONS.split("|")
+            if question.strip()
+        ))
 
     @property
     def is_sqlite(self) -> bool:
@@ -62,5 +148,9 @@ class Settings(BaseSettings):
         p = Path(self.UPLOAD_DIR)
         p.mkdir(parents=True, exist_ok=True)
         return p
+
+    @property
+    def cors_allowed_origins(self) -> list[str]:
+        return [origin.strip().rstrip("/") for origin in self.CORS_ALLOWED_ORIGINS.split("|") if origin.strip()]
 
 settings = Settings()

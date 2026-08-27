@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -31,6 +32,7 @@ from app.services.ingestion_service import extract_text_preview
 from app.services.moderation_service import ModerationService
 from app.services.narrative_version_service import NarrativeVersionService
 from app.auth import require_deal_owner
+from app.file_validation import TEMPLATE_EXTENSIONS, UploadValidationError, validate_uploaded_file
 
 router = APIRouter(prefix="/api/deals/{deal_id}/sections", tags=["sections"], dependencies=[Depends(require_deal_owner)])
 _draft_all_jobs: dict[str, dict[str, Any]] = {}
@@ -101,11 +103,20 @@ async def _run_draft_all_job(job_id: str, deal_id: str) -> None:
         await NarrativeService.draft_all(db, deal_id, report)
         with _draft_all_jobs_lock:
             _draft_all_jobs[job_id]["status"] = "completed"
-    except Exception as exc:
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception("Database failure in Draft All job %s", job_id)
         with _draft_all_jobs_lock:
             _draft_all_jobs[job_id].update(
                 status="failed",
-                error=str(exc),
+                error="A database operation failed.",
+            )
+    except Exception:
+        logger.exception("Unexpected failure in Draft All job %s", job_id)
+        with _draft_all_jobs_lock:
+            _draft_all_jobs[job_id].update(
+                status="failed",
+                error="Draft All failed unexpectedly.",
             )
     finally:
         db.close()
@@ -262,8 +273,12 @@ async def generate_narrative(
         section, orchestration_strategy = await NarrativeService.generate_section(
             db, deal_id, section_id, custom_instructions
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        logger.warning("Section generation rejected for deal %s section %s", deal_id, section_id)
+        raise HTTPException(
+            status_code=400,
+            detail="Section generation could not be completed with the supplied inputs.",
+        )
     if not section:
         raise HTTPException(status_code=404, detail="Deal or section not found")
 
@@ -461,7 +476,7 @@ async def moderate_section(
 
 # ── Template Management ────────────────────────────────────────
 
-SUPPORTED_TEMPLATE_EXTENSIONS = {".md", ".txt", ".docx", ".doc"}
+SUPPORTED_TEMPLATE_EXTENSIONS = TEMPLATE_EXTENSIONS
 
 
 @router.post("/{section_id}/template", response_model=SectionResponse)
@@ -481,17 +496,14 @@ async def upload_template(
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
 
-    # Validate file extension
-    filename = file.filename or "template"
-    ext = Path(filename).suffix.lower()
-    if ext not in SUPPORTED_TEMPLATE_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported template format: {ext}. "
-                   f"Supported: {', '.join(SUPPORTED_TEMPLATE_EXTENSIONS)}"
-        )
-
     file_bytes = await file.read()
+    try:
+        filename = validate_uploaded_file(
+            file.filename, file_bytes, allowed_extensions=TEMPLATE_EXTENSIONS
+        )
+    except UploadValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    ext = Path(filename).suffix.lower()
 
     # Save template file to disk
     template_dir = settings.upload_path / deal_id / "templates"

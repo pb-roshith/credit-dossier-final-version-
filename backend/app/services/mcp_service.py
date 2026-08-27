@@ -88,7 +88,7 @@ class MCPClientService:
     # ── Connection Management ──────────────────────────────────
 
     @classmethod
-    async def connect(cls) -> None:
+    async def connect(cls) -> bool:
         """
         Warm-up ping: open a short-lived SSE connection to verify the MCP
         server is reachable, then close it immediately. This is called once
@@ -109,11 +109,13 @@ class MCPClientService:
                 await session.initialize()
                 cls.is_connected = True
                 cls._record_success()
-                logger.info("MCP server is reachable — warm-up ping succeeded.")
+                logger.info("MCP warm-up ping succeeded.")
+                return True
         except Exception as e:
             logger.error(f"MCP warm-up ping failed: {e}")
             cls.is_connected = False
             cls._record_failure()
+            return False
 
     @classmethod
     async def disconnect(cls) -> None:
@@ -269,7 +271,7 @@ class MCPClientService:
     @classmethod
     async def get_document_summaries(cls, company_name: str, owner_user_id: str) -> str:
         if cls._is_circuit_open():
-            return "MCP circuit breaker open. Summaries temporarily unavailable."
+            return "Document summaries are temporarily unavailable."
         try:
             result = await cls._call_tool(
                 "retrieve_company_document_summaries",
@@ -281,7 +283,7 @@ class MCPClientService:
         except Exception as e:
             logger.error(f"Error calling retrieve_company_document_summaries for {company_name}: {e}")
             cls._record_failure()
-            return f"Error: {e}"
+            return "Document summaries are temporarily unavailable."
 
     # ── Cached Document Summaries ──────────────────────────────
 

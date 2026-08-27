@@ -4,8 +4,8 @@ AI-assisted credit pitch-book workflow for relationship managers and credit anal
 
 ## What the application supports
 
-- Cookie-based sign-in, registration, password reset/change, and 12-hour server-side sessions.
-- Two roles: Relationship Managers create and submit their own deals; Credit Analysts can review all deals and approve or deny submitted versions.
+- Cookie-based sign-in, registration, password reset/change, and role-based server-side sessions (30 minutes for business roles; 15 minutes for Administrators).
+- Three roles: Relationship Managers create and submit their own deals; Credit Analysts review deals; Administrators manage application security policy from a separate dashboard and cannot access deal workflows.
 - Sixteen standard credit sections with section-specific prompts and agents.
 - Single-section generation, selected-section generation, and background "Draft all" with progress reporting.
 - Hybrid grounding from a shared company Mistral Document Library, a deal-specific library, 16 structured PostgreSQL datasets exposed through the local MCP, and up to 10 section URLs.
@@ -117,11 +117,26 @@ For the four-terminal version of these instructions, see [run.md](run.md).
 
 Except for health and authentication, API routes require a valid session. Deal-scoped routes also enforce owner/analyst access.
 
+API failures use stable application codes and correlation event IDs documented in
+[`error_codes.md`](error_codes.md). The same code and event ID are written to the audit
+trail so support teams can correlate a client-visible failure without exposing internals.
+
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/health` | Runtime, agent, MCP, orchestration, and telemetry health |
 | `POST` | `/api/auth/login` | Start a session |
 | `GET` | `/api/auth/me` | Return the signed-in user |
+| `GET` | `/api/auth/configuration` | Return the password policy and allowed recovery questions |
+| `POST` | `/api/auth/register` | Create a pending account with a selected business role and three recovery questions |
+| `POST` | `/api/auth/account-status` | Check whether a user ID is waiting for administrator approval |
+| `POST` | `/api/auth/reset-password/questions` | Retrieve an account's recovery questions |
+| `POST` | `/api/auth/reset-password` | Verify three answers and reset the password |
+| `PUT` | `/api/auth/security-questions` | Replace the signed-in user's recovery questions |
+| `GET/PUT` | `/api/admin/password-policy` | Read or update password policy as Administrator |
+| `GET` | `/api/admin/user-approvals` | List accounts waiting for administrator approval |
+| `POST` | `/api/admin/user-approvals/{user_id}/approve` | Approve a pending account so it can sign in |
+| `GET` | `/api/admin/audit-logs` | Review the complete administrative-action, user-event, and system-error audit trail as Administrator |
+| `GET` | `/api/admin/administrative-audit-logs` | Review the separate administrative-action audit trail as Administrator |
 | `GET/POST` | `/api/deals` | List visible deals / create an RM-owned deal |
 | `GET/PATCH/DELETE` | `/api/deals/{deal_id}` | Read, update, or delete a deal |
 | `POST` | `/api/deals/{deal_id}/sections/{section_id}/generate` | Generate one narrative |
@@ -137,6 +152,11 @@ Except for health and authentication, API routes require a valid session. Deal-s
 
 Legacy deal-document and section-upload endpoints remain for compatibility, but the Mistral library is the primary generation source.
 
+Direct document uploads are backend-allowlisted to PDF, DOC/DOCX, XLS/XLSX,
+PPTX, CSV, TXT, Markdown, and JSON. Template uploads accept DOC/DOCX, TXT, and
+Markdown; theme references accept PDF and TXT. The API validates both the extension
+and the file signature/content and sanitizes the filename before processing it.
+
 ## Configuration
 
 The committed examples are [backend/.env.example](backend/.env.example) and [mcp/.env.example](mcp/.env.example).
@@ -150,13 +170,62 @@ The committed examples are [backend/.env.example](backend/.env.example) and [mcp
 | `MCP_SSE_URL` | Local MCP endpoint, normally `http://127.0.0.1:8001/sse` |
 | `INITIAL_RELATIONSHIP_MANAGER_*` | Optional initial RM credentials |
 | `INITIAL_CREDIT_ANALYST_*` | Optional initial analyst credentials |
+| `INITIAL_ADMIN_*` | Optional initial Administrator credentials |
+| `SESSION_TIMEOUT_*_MINUTES` | Absolute role-based session limits; business roles max 30, Administrator max 15 |
 | `ORCHESTRATION_ENABLED` | Enables orchestration pre-flight; defaults to true |
 | `MAX_GROUNDING_CHARS` | Limits assembled grounding context |
 | `GENERATION_SEMAPHORE` | Concurrent narrative generation limit |
 | `ORCHESTRATION_SEMAPHORE` | Concurrent orchestration limit |
 | `PHOENIX_API_KEY`, `PHOENIX_COLLECTOR_ENDPOINT` | Optional Phoenix trace export settings |
 
-Passwords must be at least 12 characters and contain uppercase, lowercase, numeric, and special characters; they may not contain the user ID. Never commit `.env` files.
+By default, passwords must be at least 12 characters and contain uppercase, lowercase,
+numeric, and special characters; they may not contain the user ID. Never commit `.env` files.
+
+On Windows, local recoverable secrets can be removed from plaintext `.env` files and
+stored in `backend/.data/secrets.aesgcm.json` with AES-256-GCM. The versioned AES keys
+are protected for the local machine by DPAPI in
+`backend/.data/secret-keyring.dpapi`. Migrate backend secrets from the `backend`
+directory with:
+
+```powershell
+python -m app.local_secrets .env backend MISTRAL_API_KEY DATABASE_URL INITIAL_ADMIN_PASSWORD PHOENIX_API_KEY
+python -m app.local_secrets ..\mcp\.env mcp MISTRAL_API_KEY POSTGRES_PASSWORD
+```
+
+Every successful Administrator login checks the protected key's age. At 90 days, all
+encrypted secrets are authenticated, decrypted, and atomically re-encrypted with a new
+AES-256-GCM key version before the old key is retired. Rotation timestamps and versions
+are available from `GET /api/admin/encryption-key-status`; completed or failed rotations
+are recorded in the administrator audit log. Back up both protected files together.
+DPAPI binds the keyring to this Windows host, so copying it to another host does not make
+it decryptable. Windows ACLs on `backend/.data` must allow only the application service
+identity and authorized administrators to read these files.
+
+The password policy and recovery-question bank are configurable in `backend/.env` using
+`PASSWORD_MIN_LENGTH`, `PASSWORD_MAX_LENGTH`, `PASSWORD_MIN_UPPERCASE`,
+`PASSWORD_MIN_LOWERCASE`, `PASSWORD_MIN_DIGITS`, `PASSWORD_MIN_SPECIAL`, and
+the pipe-separated `SECURITY_QUESTIONS` value. Character counts may be set to `0` to
+disable that requirement. The backend publishes these rules to the account screens and
+enforces them for registration, password changes, and password resets. New users must
+configure three distinct recovery questions; existing users can configure or replace
+theirs from Profile after confirming their current password. The question dropdown also
+offers `Custom question`, allowing users to write their own recovery-question text.
+
+Bootstrap the first Administrator with `INITIAL_ADMIN_USER_ID` and
+`INITIAL_ADMIN_PASSWORD`; public registration intentionally cannot create administrators.
+Self-registered Relationship Manager and Credit Analyst accounts enter the Administrator
+approval queue and cannot sign in or reset a password until approved from `/admin`.
+Environment password-policy values provide the defaults. After an Administrator saves
+the policy at `/admin`, the database-backed values take precedence and survive restarts.
+The same dashboard shows the complete administrator-only HTTP audit trail without a
+fixed row limit. Each row contains an event ID, UTC timestamp, source IP, user ID,
+resource ID, category, event type, HTTP status, outcome, and message. User-associated
+activity is categorized as `user_event`; authenticated administrator API activity is
+maintained separately as `administrative_action`; HTTP 5xx responses, unhandled
+exceptions, and Python `ERROR`/`EXCEPTION` records from background/runtime components
+are categorized as `system_error` with outcome `error`. Set
+`AUDIT_TRUST_X_FORWARDED_FOR=true` only behind a trusted reverse proxy that overwrites
+that header; otherwise the direct network peer address is recorded.
 
 ## Verification
 

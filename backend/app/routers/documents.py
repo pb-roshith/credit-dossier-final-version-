@@ -19,6 +19,7 @@ from app.schemas.deal import (
 from app.services.ingestion_service import IngestionService
 from app.services.deal_service import DealService
 from app.auth import require_deal_owner
+from app.file_validation import UploadValidationError, validate_uploaded_file
 
 router = APIRouter(prefix="/api/deals/{deal_id}", tags=["documents"], dependencies=[Depends(require_deal_owner)])
 
@@ -76,11 +77,15 @@ async def upload_deal_document(
                 status_code=400, detail="File is required for source_type='file'"
             )
         file_bytes = await file.read()
+        try:
+            filename = validate_uploaded_file(file.filename, file_bytes)
+        except UploadValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         doc = await IngestionService.process_deal_document(
             db=db,
             deal_id=deal_id,
             file_bytes=file_bytes,
-            filename=file.filename or "uploaded_file",
+            filename=filename,
             source_type="file",
             note=note,
         )

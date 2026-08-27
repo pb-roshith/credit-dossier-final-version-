@@ -40,18 +40,27 @@ flowchart LR
 
 ## Authentication and authorization
 
-Passwords are stored as PBKDF2-SHA256 hashes. Raw session tokens are returned only as HTTP-only cookies; only SHA-256 token hashes are persisted. Sessions expire after 12 hours.
+Passwords are stored as PBKDF2-SHA256 hashes. Raw session tokens are returned only as HTTP-only cookies; only SHA-256 token hashes are persisted. Relationship Manager and Credit Analyst sessions expire after 30 minutes; Administrator sessions expire after 15 minutes. These are absolute lifetimes, enforced by both cookie lifetime and server-side session validation.
+
+Every backend HTTP request creates an application-level append-only audit record containing event ID, UTC
+timestamp, source IP, user ID, resource ID, category, event type, HTTP status, outcome,
+and message. Authenticated administrator API activity is maintained separately with
+the `administrative_action` category. Normal and failed non-administrative activity is
+categorized as `user_event`; HTTP 5xx responses, unhandled exceptions, and Python
+error-level runtime/background logs are categorized as `system_error` with outcome
+`error`. Only Administrators can read the complete trail.
 
 The frontend and backend use one HTTP-only session cookie.
 
 Authorization is enforced in backend dependencies:
 
-| Capability | Relationship Manager | Credit Analyst |
-|---|---:|---:|
-| List/read deals | Own deals | All deals |
-| Create and submit deals | Yes | No |
-| Edit/generate/export accessible deals | Own deals | All deals |
-| Approve or deny submitted versions | No | Yes |
+| Capability | Relationship Manager | Credit Analyst | Administrator |
+|---|---:|---:|---:|
+| List/read deals | Own deals | All deals | No |
+| Create and submit deals | Yes | No | No |
+| Edit/generate/export accessible deals | Own deals | All deals | No |
+| Approve or deny submitted versions | No | Yes | No |
+| Configure password policy | No | No | Yes |
 
 Company/MCP queries are also owner-scoped so clients with the same company name do not cross user boundaries.
 

@@ -330,16 +330,18 @@ class MistralLibraryService:
         return library.id
 
     @staticmethod
-    async def delete_library(library_id: str) -> None:
+    async def delete_library(library_id: str) -> bool:
         """Delete a Mistral Library. Called on deal deletion."""
         if not library_id:
-            return
+            return False
         client = _get_client()
         try:
             await client.beta.libraries.delete_async(library_id=library_id)
             logger.info(f"Deleted Mistral Library {library_id}")
+            return True
         except Exception as e:
             logger.warning(f"Failed to delete Mistral Library {library_id}: {e}")
+            return False
 
     @staticmethod
     def library_ids_for_deal(deal: Deal) -> list[str]:
@@ -388,7 +390,9 @@ class MistralLibraryService:
 
         # Ensure library exists
         if not deal.mistral_library_id:
-            await MistralLibraryService.create_library(db, deal)
+            library_id = await MistralLibraryService.create_library(db, deal)
+            if not library_id:
+                raise RuntimeError("Mistral library creation returned no library ID.")
 
         # Upload document to Mistral library
         async def _do_upload():
@@ -510,9 +514,16 @@ class MistralLibraryService:
         )
         if remaining == 0 and deal.mistral_library_id:
             empty_library_id = deal.mistral_library_id
-            await MistralLibraryService.delete_library(empty_library_id)
-            deal.mistral_library_id = None
-            db.commit()
+            library_deleted = await MistralLibraryService.delete_library(empty_library_id)
+            if library_deleted:
+                deal.mistral_library_id = None
+                db.commit()
+            else:
+                logger.warning(
+                    "Retaining failed-to-delete empty library %s on deal %s.",
+                    empty_library_id,
+                    deal.id,
+                )
 
         logger.info(
             "Removed %s legacy copied MCP files from deal %s",
@@ -954,8 +965,13 @@ class MistralLibraryService:
                 accumulate_usage(retry_response)
                 retry_content = conversation_output_content(retry_response)
                 if retry_content:
-                    cleaned_retry, _ = clean_generation_artifacts(retry_content)
-                    if len(cleaned_retry) > len(content):
+                    cleaned_retry, retry_leaked_search = clean_generation_artifacts(retry_content)
+                    if retry_leaked_search:
+                        logger.warning(
+                            "Artifact-free retry still leaked a search query for %s.",
+                            section_title,
+                        )
+                    elif len(cleaned_retry) > len(content):
                         content = cleaned_retry
             
             # Strip markdown fences if the agent wrapped the entire response in them
@@ -1090,7 +1106,7 @@ class MistralLibraryService:
             )
             return (
                 None,
-                str(exc),
+                "Confidence evaluation was unavailable.",
                 {
                     "name": "Confidence Judge",
                     "model": "Mistral Observability Judge",
@@ -1286,5 +1302,5 @@ class MistralLibraryService:
                 "grounded_claims": 0,
                 "inferred_claims": 0,
                 "unsupported_claims": 0,
-                "summary": f"Accuracy assessment error: {str(e)}",
+                "summary": "Accuracy assessment was unavailable.",
             }

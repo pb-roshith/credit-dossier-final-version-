@@ -15,6 +15,18 @@ logger = logging.getLogger(__name__)
 
 
 _ADDITIVE_MIGRATIONS: dict[str, dict[str, str]] = {
+    "users": {
+        # Existing accounts predate the approval workflow and remain usable.
+        "is_approved": "BOOLEAN NOT NULL DEFAULT TRUE",
+        "approved_at": "TIMESTAMP WITH TIME ZONE",
+        "approved_by": "VARCHAR(64)",
+        "failed_login_attempts": "INTEGER NOT NULL DEFAULT 0",
+        "is_locked": "BOOLEAN NOT NULL DEFAULT FALSE",
+        "locked_at": "TIMESTAMP WITH TIME ZONE",
+    },
+    "audit_logs": {
+        "error_code": "VARCHAR(32)",
+    },
     "deals": {
         "owner_user_id": "VARCHAR(36)",
         "library_sync_status": "VARCHAR(32) NOT NULL DEFAULT 'not_started'",

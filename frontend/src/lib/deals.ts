@@ -3,6 +3,8 @@
  * Supports Mistral Library + Agents architecture.
  */
 
+import { apiErrorFromResponse } from "@/lib/api-error";
+
 const API_BASE = "/api";
 
 // ── Types ──────────────────────────────────────────────────────
@@ -281,8 +283,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     if (res.status === 401 && typeof window !== "undefined") {
       window.dispatchEvent(new Event("auth:unauthorized"));
     }
-    const errBody = await res.text().catch(() => "");
-    throw new Error(`API ${res.status}: ${errBody}`);
+    throw await apiErrorFromResponse(res);
   }
   // Handle 204 No Content
   if (res.status === 204) return undefined as unknown as T;
@@ -298,11 +299,17 @@ export const api = {
   // Deals
   deals: {
     list: (params?: { status?: string; search?: string }) => {
-      const qs = new URLSearchParams();
-      if (params?.status && params.status !== "all") qs.set("status", params.status);
-      if (params?.search) qs.set("search", params.search);
-      const query = qs.toString();
-      return request<DealListItem[]>(`${API_BASE}/deals${query ? `?${query}` : ""}`);
+      const filters = {
+        status: params?.status && params.status !== "all" ? params.status : null,
+        search: params?.search || null,
+      };
+      if (!filters.status && !filters.search) {
+        return request<DealListItem[]>(`${API_BASE}/deals`);
+      }
+      return request<DealListItem[]>(`${API_BASE}/deals/search`, {
+        method: "POST",
+        body: JSON.stringify(filters),
+      });
     },
     get: (id: string) => request<Deal>(`${API_BASE}/deals/${id}`),
     create: (data: DealCreate) =>
@@ -358,7 +365,7 @@ export const api = {
         method: "POST",
         body: formData,
       });
-      if (!res.ok) throw new Error(`Template upload failed: ${res.status}`);
+      if (!res.ok) throw await apiErrorFromResponse(res, "Template upload failed.");
       return res.json() as Promise<Section>;
     },
     deleteTemplate: (dealId: string, sectionId: string) =>
@@ -402,24 +409,24 @@ export const api = {
         method: "POST",
         body: formData,
       });
-      if (!res.ok) throw new Error("Failed to upload library file");
+      if (!res.ok) throw await apiErrorFromResponse(res, "Library upload failed.");
       return res.json();
     },
     delete: async (dealId: string, fileId: string) => {
       const res = await fetch(`${API_BASE}/deals/${dealId}/library/${fileId}`, {
         method: "DELETE",
       });
-      if (!res.ok) throw new Error("Failed to delete library file");
+      if (!res.ok) throw await apiErrorFromResponse(res, "Library file deletion failed.");
       return res.json();
     },
     syncStatus: async (dealId: string) => {
       const res = await fetch(`${API_BASE}/deals/${dealId}/library/sync-status`);
-      if (!res.ok) throw new Error("Failed to fetch sync status");
+      if (!res.ok) throw await apiErrorFromResponse(res, "Library status retrieval failed.");
       return res.json();
     },
     triggerSync: async (dealId: string) => {
       const res = await fetch(`${API_BASE}/deals/${dealId}/library/sync`, { method: "POST" });
-      if (!res.ok) throw new Error("Failed to trigger sync");
+      if (!res.ok) throw await apiErrorFromResponse(res, "Library synchronization failed.");
       return res.json();
     },
     initialize: (dealId: string) =>
@@ -447,10 +454,11 @@ export const api = {
         body: JSON.stringify({ comments }),
       }),
     download: async (dealId: string, versionId: string) => {
-      const res = await fetch(`${API_BASE}/deals/${dealId}/versions/${versionId}/download`);
+      const res = await fetch(`${API_BASE}/deals/${dealId}/versions/${versionId}/download`, {
+        method: "POST",
+      });
       if (!res.ok) {
-        const error = await res.json().catch(() => null);
-        throw new Error(error?.detail || `Version download failed: ${res.status}`);
+        throw await apiErrorFromResponse(res, "Version download failed.");
       }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -474,7 +482,7 @@ export const api = {
         method: "POST",
         body: formData,
       });
-      if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+      if (!res.ok) throw await apiErrorFromResponse(res, "Document upload failed.");
       return res.json() as Promise<DealDocument>;
     },
     delete: (dealId: string, docId: string) =>
@@ -502,7 +510,7 @@ export const api = {
         method: "POST",
         body: formData,
       });
-      if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+      if (!res.ok) throw await apiErrorFromResponse(res, "Upload failed.");
       return res.json() as Promise<UploadBrief>;
     },
     delete: (uploadId: string) =>
@@ -515,7 +523,7 @@ export const api = {
       const res = await fetch(`${API_BASE}/deals/${dealId}/export/${format}`, {
         method: "POST",
       });
-      if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+      if (!res.ok) throw await apiErrorFromResponse(res, "Export failed.");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const contentDisposition = res.headers.get("content-disposition");
@@ -532,7 +540,7 @@ export const api = {
       const res = await fetch(`${API_BASE}/deals/${dealId}/report`, {
         method: "POST",
       });
-      if (!res.ok) throw new Error(`Report generation failed: ${res.status}`);
+      if (!res.ok) throw await apiErrorFromResponse(res, "Report generation failed.");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

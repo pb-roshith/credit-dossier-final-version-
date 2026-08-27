@@ -14,6 +14,7 @@ from app.models.library_file import LibraryFile
 from app.schemas.deal import LibraryFileResponse
 from app.services.mistral_library_service import MistralLibraryService
 from app.auth import require_deal_owner
+from app.file_validation import UploadValidationError, validate_uploaded_file
 
 import httpx
 
@@ -67,7 +68,9 @@ async def upload_to_library(
 
     # ── Ensure Mistral Library exists BEFORE processing content ──
     if not deal.mistral_library_id:
-        await MistralLibraryService.create_library(db, deal)
+        library_id = await MistralLibraryService.create_library(db, deal)
+        if not library_id:
+            raise HTTPException(status_code=502, detail="Unable to initialize the document library.")
 
     if source_type == "file":
         if not file:
@@ -75,7 +78,10 @@ async def upload_to_library(
                 status_code=400, detail="File is required for source_type='file'"
             )
         file_bytes = await file.read()
-        filename = file.filename or "uploaded_file"
+        try:
+            filename = validate_uploaded_file(file.filename, file_bytes)
+        except UploadValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         lib_file = await MistralLibraryService.upload_file_to_library(
             db=db,
             deal=deal,
@@ -129,10 +135,10 @@ async def upload_to_library(
                 f"The content should be reviewed manually.\n"
             ).encode("utf-8")
             filename = "url_reference.txt"
-        except Exception as e:
+        except httpx.RequestError as e:
             raise HTTPException(
-                status_code=400, detail=f"Failed to fetch URL: {str(e)}"
-            )
+                status_code=400, detail="Failed to fetch the URL. Please verify it and try again."
+            ) from e
 
         lib_file = await MistralLibraryService.upload_file_to_library(
             db=db,
