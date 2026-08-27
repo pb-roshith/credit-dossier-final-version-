@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 import app.security as security
 from app.report_security import safe_export_filename, secure_download_headers
 from app.request_security import install_request_security_middleware
+from app.schemas.deal import DealCreate, SectionUpdate
+from pydantic import ValidationError
 
 
 class SecurityControlTests(unittest.TestCase):
@@ -59,6 +61,34 @@ class SecurityControlTests(unittest.TestCase):
         self.assertIn("no-store", headers["Cache-Control"])
         self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
 
+    def test_browser_security_headers_block_framing_and_active_content(self):
+        app = FastAPI()
+        install_request_security_middleware(app)
+
+        @app.get("/health")
+        def health():
+            return {"ok": True}
+
+        response = TestClient(app).get("/health")
+        self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+        self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
+
+    def test_request_models_reject_coercion_unknown_fields_and_control_chars(self):
+        with self.assertRaises(ValidationError):
+            DealCreate(customer="Acme", amount="1000")
+        with self.assertRaises(ValidationError):
+            SectionUpdate(generated_content="ok", undeclared=True)
+        with self.assertRaises(ValidationError):
+            SectionUpdate(generated_content="bad\x00value")
+
+    def test_business_text_allows_legitimate_security_sensitive_punctuation(self):
+        content = "Client's A&B #1 / outlook; covenant -- unchanged."
+        self.assertEqual(
+            SectionUpdate(generated_content=content).generated_content,
+            content,
+        )
 
 if __name__ == "__main__":
     unittest.main()

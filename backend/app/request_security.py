@@ -54,6 +54,21 @@ def install_request_security_middleware(app: FastAPI) -> None:
                 headers={"Cache-Control": "no-store"},
             )
         response = await call_next(request)
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'none'; base-uri 'none'; form-action 'none'; "
+            "frame-ancestors 'none'; object-src 'none'",
+        )
+        response.headers.setdefault("X-Frame-Options", "DENY")
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        )
+        if settings.APP_ENV.casefold() == "production":
+            response.headers.setdefault(
+                "Strict-Transport-Security",
+                "max-age=31536000; includeSubDomains",
+            )
         return response

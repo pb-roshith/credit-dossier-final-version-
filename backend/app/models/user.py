@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, true
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base
+from app.database import Base, audit_table_args
 
 
 def _uuid() -> str:
@@ -87,6 +87,7 @@ class PasswordAuditEvent(Base):
     """Immutable audit record for password changes and resets."""
 
     __tablename__ = "password_audit_events"
+    __table_args__ = audit_table_args()
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     event_type: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
@@ -104,6 +105,7 @@ class AuditLog(Base):
     """Administrative-action, user-event, or system-error audit record."""
 
     __tablename__ = "audit_logs"
+    __table_args__ = audit_table_args()
 
     event_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     occurred_at: Mapped[datetime] = mapped_column(
@@ -129,7 +131,11 @@ class AuthSession(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+        nullable=False,
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

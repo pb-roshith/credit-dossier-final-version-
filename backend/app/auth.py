@@ -153,6 +153,11 @@ def verify_password(password: str, encoded: str) -> bool:
 
 
 def create_session(db: Session, user: User) -> tuple[str, AuthSession]:
+    # Serialize concurrent logins for the same account and replace its session.
+    db.query(User.id).filter(User.id == user.id).with_for_update().one()
+    db.query(AuthSession).filter(AuthSession.user_id == user.id).delete(
+        synchronize_session=False
+    )
     raw_token = secrets.token_urlsafe(48)
     now = datetime.now(timezone.utc)
     session = AuthSession(

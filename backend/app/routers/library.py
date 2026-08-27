@@ -5,6 +5,8 @@ Company documents stay in their registered source library. Files handled here
 belong only to this deal; generation searches both libraries together.
 """
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session, joinedload
 
@@ -40,11 +42,11 @@ def list_library_files(deal_id: str, db: Session = Depends(get_db)):
 @router.post("", response_model=LibraryFileResponse, status_code=201)
 async def upload_to_library(
     deal_id: str,
-    source_type: str = Form(..., description="file, url, or text"),
+    source_type: Literal["file", "url", "text"] = Form(...),
     file: UploadFile | None = File(None),
-    url: str | None = Form(None),
-    text_content: str | None = Form(None),
-    note: str | None = Form(None),
+    url: str | None = Form(None, max_length=2048),
+    text_content: str | None = Form(None, max_length=500_000),
+    note: str | None = Form(None, max_length=4000),
     db: Session = Depends(get_db),
 ):
     """

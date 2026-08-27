@@ -8,6 +8,8 @@ from typing import Optional
 from urllib.parse import urlsplit
 from pydantic import BaseModel, Field, field_validator
 
+from app.schemas.input_validation import StrictInputModel
+
 
 def _sanitize_failure_metadata(value):
     """Remove legacy exception text before persisted JSON reaches API clients."""
@@ -61,8 +63,8 @@ class SectionDocumentLinkResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class LinkDocumentsRequest(BaseModel):
-    document_ids: list[str]
+class LinkDocumentsRequest(StrictInputModel):
+    document_ids: list[str] = Field(min_length=1, max_length=100)
 
 
 # ── Library File (Mistral Library) ─────────────────────────────
@@ -146,13 +148,13 @@ class SectionResponse(BaseModel):
         return _sanitize_failure_metadata(v or [])
 
 
-class SectionUpdate(BaseModel):
-    sources: Optional[str] = None
-    expected_output: Optional[str] = None
-    custom_instructions: Optional[str] = None
-    output_template: Optional[str] = None
-    generated_content: Optional[str] = None
-    state: Optional[str] = None
+class SectionUpdate(StrictInputModel):
+    sources: Optional[str] = Field(default=None, max_length=20_000)
+    expected_output: Optional[str] = Field(default=None, max_length=20_000)
+    custom_instructions: Optional[str] = Field(default=None, max_length=50_000)
+    output_template: Optional[str] = Field(default=None, max_length=100_000)
+    generated_content: Optional[str] = Field(default=None, max_length=500_000)
+    state: Optional[str] = Field(default=None, pattern=r"^(pending|ready)$")
     source_urls: Optional[list[str]] = None
 
     @field_validator("source_urls")
@@ -187,11 +189,11 @@ class AuditEntryResponse(BaseModel):
 
 
 # ── Version ─────────────────────────────────────────────────────
-class VersionCreate(BaseModel):
-    notes: str = ""
+class VersionCreate(StrictInputModel):
+    notes: str = Field(default="", max_length=4000)
 
 
-class VersionReviewRequest(BaseModel):
+class VersionReviewRequest(StrictInputModel):
     comments: str = Field(default="", max_length=4000)
 
 
@@ -221,49 +223,55 @@ class NarrativeVersionResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class NarrativeEditLockResponse(BaseModel):
+    section_id: str
+    locked_by: str
+    expires_at: datetime
+
+
 # ── Deal ────────────────────────────────────────────────────────
-class DealCreate(BaseModel):
+class DealCreate(StrictInputModel):
     customer: str = Field(..., min_length=1, max_length=256)
-    customer_type: str = "Existing"
-    industry: str = ""
-    segment: str = "Mid Corporate"
-    geography: str = ""
-    kyc: str = "pending"
-    facility: str = "Term Loan"
-    currency: str = "INR"
-    amount: float = 0
-    tenure: int = 60
-    pricing: str = ""
-    repayment: str = ""
+    customer_type: str = Field(default="Existing", max_length=32)
+    industry: str = Field(default="", max_length=128)
+    segment: str = Field(default="Mid Corporate", max_length=64)
+    geography: str = Field(default="", max_length=128)
+    kyc: str = Field(default="pending", pattern=r"^(pending|verified)$")
+    facility: str = Field(default="Term Loan", max_length=64)
+    currency: str = Field(default="INR", min_length=3, max_length=8, pattern=r"^[A-Z]+$")
+    amount: float = Field(default=0, ge=0)
+    tenure: int = Field(default=60, ge=0, le=1200)
+    pricing: str = Field(default="", max_length=128)
+    repayment: str = Field(default="", max_length=128)
     collateral: bool = False
-    due: str = ""
+    due: str = Field(default="", max_length=16)
 
 
-class DealSearchRequest(BaseModel):
+class DealSearchRequest(StrictInputModel):
     """Filters sent in a POST body so customer searches never enter URLs/logs."""
     status: Optional[str] = Field(default=None, max_length=32)
     search: Optional[str] = Field(default=None, max_length=256)
 
 
-class DealUpdate(BaseModel):
-    customer: Optional[str] = None
-    customer_type: Optional[str] = None
-    industry: Optional[str] = None
-    segment: Optional[str] = None
-    geography: Optional[str] = None
-    kyc: Optional[str] = None
-    facility: Optional[str] = None
-    currency: Optional[str] = None
-    amount: Optional[float] = None
-    tenure: Optional[int] = None
-    pricing: Optional[str] = None
-    repayment: Optional[str] = None
+class DealUpdate(StrictInputModel):
+    customer: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    customer_type: Optional[str] = Field(default=None, max_length=32)
+    industry: Optional[str] = Field(default=None, max_length=128)
+    segment: Optional[str] = Field(default=None, max_length=64)
+    geography: Optional[str] = Field(default=None, max_length=128)
+    kyc: Optional[str] = Field(default=None, pattern=r"^(pending|verified)$")
+    facility: Optional[str] = Field(default=None, max_length=64)
+    currency: Optional[str] = Field(default=None, min_length=3, max_length=8, pattern=r"^[A-Z]+$")
+    amount: Optional[float] = Field(default=None, ge=0)
+    tenure: Optional[int] = Field(default=None, ge=0, le=1200)
+    pricing: Optional[str] = Field(default=None, max_length=128)
+    repayment: Optional[str] = Field(default=None, max_length=128)
     collateral: Optional[bool] = None
-    due: Optional[str] = None
-    status: Optional[str] = None
-    primary_color: Optional[str] = None
-    secondary_color: Optional[str] = None
-    theme_palette: Optional[str] = None
+    due: Optional[str] = Field(default=None, max_length=16)
+    status: Optional[str] = Field(default=None, max_length=32)
+    primary_color: Optional[str] = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    secondary_color: Optional[str] = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    theme_palette: Optional[str] = Field(default=None, max_length=256)
 
 
 class DealResponse(BaseModel):

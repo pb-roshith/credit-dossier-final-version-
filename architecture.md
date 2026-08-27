@@ -184,5 +184,5 @@ Shutdown removes the temporary global Mistral agents/connectors and disconnects 
 - Mistral telemetry is configured with redaction for financial content.
 - URL sources are explicitly stored per section and validated before scraping.
 - MCP caching has a TTL and circuit breaker to limit repeated failures.
-- SQLite is supported for development, but the documented integrated stack uses PostgreSQL and separates backend and MCP databases.
+- PostgreSQL is the only supported application database; backend and MCP data remain separated.
 - Local file storage is suitable for development. Production deployment should use durable object storage, managed secrets, HTTPS/secure cookies, controlled CORS origins, and a real migration/deployment process.

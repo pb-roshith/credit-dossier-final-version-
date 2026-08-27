@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from sqlalchemy import String, Integer, Float, Text, DateTime, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base
+from app.database import Base, audit_table_args
 
 
 def _now() -> datetime:
@@ -17,6 +17,7 @@ def _now() -> datetime:
 
 class LibrarySyncLog(Base):
     __tablename__ = "library_sync_logs"
+    __table_args__ = audit_table_args()
 
     id: Mapped[str] = mapped_column(
         String(64), primary_key=True,

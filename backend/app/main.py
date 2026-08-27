@@ -61,6 +61,8 @@ async def lifespan(app: FastAPI):
     # Step 1: Database
     t_step = time.time()
     logger.info("[startup] Creating database tables…")
+    from app.migrations import prepare_database_schemas
+    prepare_database_schemas(engine)
     Base.metadata.create_all(bind=engine)
     from app.audit import install_system_error_logging
     system_error_handler = install_system_error_logging()
@@ -167,8 +169,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Accept", "Content-Type"],
+    expose_headers=["Content-Disposition"],
 )
 
 # ── Mount routers ───────────────────────────────────────────────

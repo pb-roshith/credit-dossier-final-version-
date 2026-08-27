@@ -2,6 +2,8 @@
 Uploads API router — file, URL, and text upload for section grounding.
 """
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 
@@ -27,11 +29,11 @@ router = APIRouter(tags=["uploads"])
 async def create_upload(
     deal_id: str,
     section_id: str,
-    source_type: str = Form(..., description="file, url, or text"),
+    source_type: Literal["file", "url", "text"] = Form(...),
     file: UploadFile | None = File(None),
-    url: str | None = Form(None),
-    text_content: str | None = Form(None),
-    note: str | None = Form(None),
+    url: str | None = Form(None, max_length=2048),
+    text_content: str | None = Form(None, max_length=500_000),
+    note: str | None = Form(None, max_length=4000),
     db: Session = Depends(get_db),
 ):
     """

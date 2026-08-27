@@ -28,6 +28,7 @@ from app.config import settings
 from app.database import get_db
 from app.local_secrets import rotate_if_due
 from app.models.user import AuditLog, AuthSession, SecurityAnswer, User
+from app.schemas.input_validation import StrictInputModel
 
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 USER_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
-class Credentials(BaseModel):
+class Credentials(StrictInputModel):
     user_id: str = Field(min_length=3, max_length=64)
     password: str = Field(min_length=1, max_length=1024)
 
@@ -48,7 +49,7 @@ class Credentials(BaseModel):
         return value
 
 
-class SecurityQuestionResponse(BaseModel):
+class SecurityQuestionResponse(StrictInputModel):
     question: str = Field(min_length=1, max_length=256)
     answer: str = Field(min_length=2, max_length=256)
 
@@ -71,13 +72,13 @@ class RegisterRequest(Credentials):
         return value
 
 
-class ChangePasswordRequest(BaseModel):
+class ChangePasswordRequest(StrictInputModel):
     current_password: str = Field(min_length=1, max_length=1024)
     new_password: str = Field(min_length=1, max_length=1024)
     confirm_password: str = Field(min_length=1, max_length=1024)
 
 
-class UserIdRequest(BaseModel):
+class UserIdRequest(StrictInputModel):
     user_id: str = Field(min_length=3, max_length=64)
 
     @field_validator("user_id")
@@ -95,7 +96,7 @@ class ResetPasswordRequest(UserIdRequest):
     confirm_password: str = Field(min_length=1, max_length=1024)
 
 
-class ConfigureSecurityQuestionsRequest(BaseModel):
+class ConfigureSecurityQuestionsRequest(StrictInputModel):
     current_password: str = Field(min_length=1, max_length=1024)
     security_questions: list[SecurityQuestionResponse] = Field(min_length=3, max_length=3)
 
@@ -165,8 +166,8 @@ def _set_session_cookie(
         value=raw_token,
         max_age=session_timeout_minutes(role) * 60,
         httponly=True,
-        secure=settings.APP_ENV.lower() == "production",
-        samesite="lax",
+        secure=True,
+        samesite="strict",
         path="/",
     )
 
@@ -435,5 +436,5 @@ def logout(
                 request.state.audit_resource_id = f"user:{auth_session.user.user_id}"
             db.delete(auth_session)
             db.commit()
-    response.delete_cookie(SESSION_COOKIE, path="/", samesite="lax")
+    response.delete_cookie(SESSION_COOKIE, path="/", secure=True, httponly=True, samesite="strict")
     return Response(status_code=204, headers=response.headers)

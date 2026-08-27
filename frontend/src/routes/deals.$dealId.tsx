@@ -358,6 +358,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const [editingContent, setEditingContent] = useState(false);
   const [editedContent, setEditedContent] = useState("");
   const [savingContent, setSavingContent] = useState(false);
+  const [acquiringEditLock, setAcquiringEditLock] = useState(false);
   const [selectedSectionIds, setSelectedSectionIds] = useState<Set<string>>(new Set());
   const [draftingSelected, setDraftingSelected] = useState(false);
   const [showEdits, setShowEdits] = useState(false);
@@ -389,6 +390,43 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       setShowMoreModeration(false);
     }
   }, [activeId, active]);
+
+  useEffect(() => {
+    return () => {
+      if (activeId) void api.sections.releaseEditLock(deal.id, activeId).catch(() => undefined);
+    };
+  }, [deal.id, activeId]);
+
+  useEffect(() => {
+    if (!editingContent || !activeId) return;
+    const timer = window.setInterval(() => {
+      void api.sections.acquireEditLock(deal.id, activeId).catch(() => {
+        setEditingContent(false);
+        window.alert("Your narrative edit lock expired or was lost. Reopen the editor to continue.");
+      });
+    }, 60_000);
+    return () => window.clearInterval(timer);
+  }, [deal.id, activeId, editingContent]);
+
+  const handleStartEditing = async () => {
+    if (!active || acquiringEditLock) return;
+    setAcquiringEditLock(true);
+    try {
+      await api.sections.acquireEditLock(deal.id, active.id);
+      setEditedContent(active.generated_content || "");
+      setEditingContent(true);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "This narrative is locked by another user.");
+    } finally {
+      setAcquiringEditLock(false);
+    }
+  };
+
+  const handleCancelEditing = async () => {
+    if (!active) return;
+    setEditingContent(false);
+    await api.sections.releaseEditLock(deal.id, active.id).catch(() => undefined);
+  };
 
   const handleSaveSectionDetails = async () => {
     if (!active || savingSectionDetails) return;
@@ -648,6 +686,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       if (showVersionHistory) await loadNarrativeVersions();
       setEditingContent(false);
       setShowEdits(true);
+      await api.sections.releaseEditLock(deal.id, active.id);
     } catch (err) {
       console.error("Save content failed:", err);
     } finally {
@@ -1330,20 +1369,21 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               )}
               {active.generated_content && !editingContent && (
                 <button
-                  onClick={() => {
-                    setEditedContent(active.generated_content || "");
-                    setEditingContent(true);
-                  }}
-                  disabled={generating}
+                  onClick={handleStartEditing}
+                  disabled={generating || acquiringEditLock}
                   className="inline-flex h-7 items-center gap-1 rounded-md border border-primary-foreground/30 bg-primary-foreground/10 px-2 text-xs font-medium disabled:opacity-60 hover:bg-primary-foreground/20 transition-colors"
                 >
-                  <Type className="h-3.5 w-3.5" />
-                  Edit
+                  {acquiringEditLock ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Type className="h-3.5 w-3.5" />
+                  )}
+                  {acquiringEditLock ? "Opening" : "Edit"}
                 </button>
               )}
               {editingContent && (
                 <button
-                  onClick={() => setEditingContent(false)}
+                  onClick={handleCancelEditing}
                   disabled={savingContent}
                   className="inline-flex h-7 items-center gap-1 rounded-md border border-primary-foreground/30 bg-transparent px-2 text-xs font-medium text-primary-foreground disabled:opacity-60 hover:bg-primary-foreground/10 transition-colors"
                 >

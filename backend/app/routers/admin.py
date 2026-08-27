@@ -10,6 +10,7 @@ from app.auth import hash_password, password_policy, require_admin, validate_pas
 from app.database import get_db
 from app.local_secrets import rotation_status
 from app.models.user import AuditLog, AuthSession, PasswordPolicyConfiguration, User
+from app.schemas.input_validation import StrictInputModel
 
 
 router = APIRouter(
@@ -19,7 +20,7 @@ router = APIRouter(
 )
 
 
-class PasswordPolicyRequest(BaseModel):
+class PasswordPolicyRequest(StrictInputModel):
     min_length: int = Field(ge=1, le=1024)
     max_length: int = Field(ge=1, le=1024)
     min_uppercase: int = Field(ge=0, le=1024)
@@ -77,7 +78,7 @@ class LockedUserResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class AdminResetPasswordRequest(BaseModel):
+class AdminResetPasswordRequest(StrictInputModel):
     new_password: str = Field(min_length=1, max_length=1024)
     confirm_password: str = Field(min_length=1, max_length=1024)
 

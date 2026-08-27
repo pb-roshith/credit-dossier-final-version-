@@ -1,6 +1,5 @@
 """
-SQLAlchemy engine, session factory and declarative Base.
-Transparently supports SQLite (dev) and PostgreSQL (prod) based on DATABASE_URL.
+PostgreSQL SQLAlchemy engine, session factory and declarative Base.
 """
 
 from sqlalchemy import create_engine, event
@@ -10,27 +9,25 @@ from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from app.config import settings
 
 
-# ── Engine configuration ────────────────────────────────────────
-connect_args = {}
-if settings.is_sqlite:
-    # SQLite needs check_same_thread=False for FastAPI's async usage
-    connect_args["check_same_thread"] = False
+AUDIT_SCHEMA = "audit"
 
+
+def audit_table_args() -> dict[str, str]:
+    return {"schema": AUDIT_SCHEMA}
+
+
+# ── Engine configuration ────────────────────────────────────────
 engine = create_engine(
     settings.DATABASE_URL,
-    connect_args=connect_args,
     echo=False,  # Disabled to prevent massive SQL query logs in the terminal
-    pool_pre_ping=True,  # reconnect stale connections (useful for PostgreSQL)
+    pool_pre_ping=True,
 )
 
-# Enable WAL mode and foreign keys for SQLite
-if settings.is_sqlite:
-    @event.listens_for(engine, "connect")
-    def _set_sqlite_pragma(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
+@event.listens_for(engine, "connect")
+def _set_postgresql_lock_timeout(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute(f"SET lock_timeout = '{settings.DB_LOCK_TIMEOUT_SECONDS}s'")
+    cursor.close()
 
 
 # ── Session factory ─────────────────────────────────────────────

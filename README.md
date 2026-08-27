@@ -39,7 +39,7 @@ The frontend uses the backend API and a single HTTP-only session cookie.
 | Frontend | React 19, TypeScript, TanStack Router/Start, Vite 8 |
 | UI | Tailwind CSS 4, shadcn/ui, Radix UI |
 | AI | Mistral Agents, Document Library, moderation, OCR, and Observability judges |
-| Data | PostgreSQL for the normal local stack; SQLite remains supported by the backend |
+| Data | PostgreSQL, with persisted logs isolated in the `audit` schema |
 | Integration | Model Context Protocol over local SSE |
 | Export | ReportLab/xhtml2pdf, python-docx, python-pptx |
 | Telemetry | Mistral telemetry and optional Arize Phoenix/OpenTelemetry |

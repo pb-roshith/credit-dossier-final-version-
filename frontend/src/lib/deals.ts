@@ -269,6 +269,12 @@ export type NarrativeVersion = {
   created_at: string;
 };
 
+export type NarrativeEditLock = {
+  section_id: string;
+  locked_by: string;
+  expires_at: string;
+};
+
 // ── Fetch helpers ──────────────────────────────────────────────
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
@@ -344,6 +350,15 @@ export const api = {
       request<Section>(`${API_BASE}/deals/${dealId}/sections/${sectionId}`, {
         method: "PATCH",
         body: JSON.stringify(data),
+      }),
+    acquireEditLock: (dealId: string, sectionId: string) =>
+      request<NarrativeEditLock>(
+        `${API_BASE}/deals/${dealId}/sections/${sectionId}/edit-lock`,
+        { method: "POST" },
+      ),
+    releaseEditLock: (dealId: string, sectionId: string) =>
+      request<void>(`${API_BASE}/deals/${dealId}/sections/${sectionId}/edit-lock`, {
+        method: "DELETE",
       }),
     generate: (dealId: string, sectionId: string, customInstructions?: string) =>
       request<NarrativeResponse>(`${API_BASE}/deals/${dealId}/sections/${sectionId}/generate`, {

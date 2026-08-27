@@ -1,29 +1,37 @@
 import unittest
 import logging
+import os
 from datetime import timedelta
+
+TEST_DATABASE_URL = os.environ.get("POSTGRES_TEST_DATABASE_URL", "")
+if not TEST_DATABASE_URL:
+    raise unittest.SkipTest("Set POSTGRES_TEST_DATABASE_URL to run database tests.")
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
 import app.auth as auth
 from app.audit import DatabaseAuditLogHandler, install_audit_middleware
 from app.config import settings
 from app.database import Base, get_db
-from app.models.user import AuditLog, PasswordPolicyConfiguration, User
+from app.models.user import AuthSession, AuditLog, PasswordPolicyConfiguration, User
 from app.routers.admin import router as admin_router
 from app.routers.auth import router
 from app.error_handlers import install_exception_handlers
+from app.migrations import prepare_database_schemas
 
 
-engine = create_engine(
-    "sqlite://",
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
+database_name = make_url(TEST_DATABASE_URL).database or ""
+if not database_name.casefold().endswith("_test"):
+    raise RuntimeError("POSTGRES_TEST_DATABASE_URL must target a database ending in '_test'.")
+
+engine = create_engine(TEST_DATABASE_URL, pool_pre_ping=True)
 TestingSession = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+prepare_database_schemas(engine)
+Base.metadata.drop_all(engine)
 Base.metadata.create_all(engine)
 
 
@@ -294,14 +302,22 @@ def test_admin_can_persist_policy_and_business_user_cannot():
             "/api/auth/login",
             json={"user_id": "policy-analyst", "password": "AnalystPassword1!"},
         )
-        assert "Max-Age=1800" in analyst_login.headers["set-cookie"]
+        analyst_cookie = analyst_login.headers["set-cookie"]
+        assert "Max-Age=1800" in analyst_cookie
+        assert "HttpOnly" in analyst_cookie
+        assert "Secure" in analyst_cookie
+        assert "SameSite=strict" in analyst_cookie
         assert client.get("/api/admin/password-policy").status_code == 403
 
         admin_login = client.post(
             "/api/auth/login",
             json={"user_id": "policy-admin", "password": "AdminPassword1!"},
         )
-        assert "Max-Age=900" in admin_login.headers["set-cookie"]
+        admin_cookie = admin_login.headers["set-cookie"]
+        assert "Max-Age=900" in admin_cookie
+        assert "HttpOnly" in admin_cookie
+        assert "Secure" in admin_cookie
+        assert "SameSite=strict" in admin_cookie
         audit_response = client.get("/api/admin/audit-logs")
         assert audit_response.status_code == 200
         assert audit_response.json()
@@ -438,6 +454,54 @@ def test_role_based_session_timeouts_and_legacy_cap():
         db.close()
 
 
+def test_new_login_invalidates_existing_session():
+    original_iterations = auth.PBKDF2_ITERATIONS
+    auth.PBKDF2_ITERATIONS = 1_000
+    user_id = "single-session-test"
+    password = "SingleSessionPassword1!"
+    db = TestingSession()
+    try:
+        user = User(
+            user_id=user_id,
+            password_hash=auth.hash_password(password),
+            role="credit_analyst",
+        )
+        db.add(user)
+        db.commit()
+        internal_user_id = user.id
+    finally:
+        db.close()
+
+    first_client = TestClient(app)
+    second_client = TestClient(app)
+    try:
+        first_login = first_client.post(
+            "/api/auth/login", json={"user_id": user_id, "password": password}
+        )
+        assert first_login.status_code == 200, first_login.text
+        assert first_client.get("/api/auth/me").status_code == 200
+
+        second_login = second_client.post(
+            "/api/auth/login", json={"user_id": user_id, "password": password}
+        )
+        assert second_login.status_code == 200, second_login.text
+        assert second_client.get("/api/auth/me").status_code == 200
+        assert first_client.get("/api/auth/me").status_code == 401
+
+        db = TestingSession()
+        try:
+            assert (
+                db.query(AuthSession)
+                .filter(AuthSession.user_id == internal_user_id)
+                .count()
+                == 1
+            )
+        finally:
+            db.close()
+    finally:
+        auth.PBKDF2_ITERATIONS = original_iterations
+
+
 def test_system_errors_have_separate_audit_category():
     error_client = TestClient(app, raise_server_exceptions=False)
     response = error_client.get("/api/test/system-error")
@@ -507,6 +571,9 @@ class AuthRecoveryTests(unittest.TestCase):
 
     def test_role_session_timeouts(self):
         test_role_based_session_timeouts_and_legacy_cap()
+
+    def test_single_active_session(self):
+        test_new_login_invalidates_existing_session()
 
     def test_system_error_audit_category(self):
         test_system_errors_have_separate_audit_category()

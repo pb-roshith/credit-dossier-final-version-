@@ -3,11 +3,13 @@ Pydantic schemas for AI narrative generation.
 """
 
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from app.schemas.input_validation import StrictInputModel
 
 
-class NarrativeRequest(BaseModel):
-    custom_instructions: Optional[str] = None
+class NarrativeRequest(StrictInputModel):
+    custom_instructions: Optional[str] = Field(default=None, max_length=50_000)
 
 
 class NarrativeResponse(BaseModel):

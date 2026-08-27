@@ -1,10 +1,10 @@
 """
 Application configuration using pydantic-settings.
-Supports both SQLite (local dev) and PostgreSQL (production) via DATABASE_URL.
+PostgreSQL is the only supported application database.
 """
 
 from pathlib import Path
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.local_secrets import load_into_environment
@@ -29,9 +29,9 @@ class Settings(BaseSettings):
     MISTRAL_ACCURACY_JUDGE_MAX_SCORE: float = 100.0
 
     # ── Database ────────────────────────────────────────────────
-    # SQLite:      sqlite:///./credit_dossier.db
-    # PostgreSQL:  postgresql://user:pass@host:5432/dbname
-    DATABASE_URL: str = "sqlite:///./credit_dossier.db"
+    # Required in backend/.env or the deployment secret store.
+    DATABASE_URL: str
+    DB_LOCK_TIMEOUT_SECONDS: int = 5
 
     # ── Application ─────────────────────────────────────────────
     APP_ENV: str = "development"
@@ -40,6 +40,7 @@ class Settings(BaseSettings):
         "http://localhost:8080|http://localhost:5173|http://localhost:3000|"
         "http://127.0.0.1:8080|http://127.0.0.1:5173"
     )
+    NARRATIVE_EDIT_LOCK_MINUTES: int = 5
 
     # ── Orchestration ──────────────────────────────────────────
     ORCHESTRATION_ENABLED: bool = True
@@ -131,6 +132,13 @@ class Settings(BaseSettings):
             raise ValueError("Configure at least three unique security questions.")
         return self
 
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def require_postgresql(cls, value: str) -> str:
+        if not value.startswith(("postgresql://", "postgresql+")):
+            raise ValueError("DATABASE_URL must use PostgreSQL.")
+        return value
+
     @property
     def security_question_options(self) -> list[str]:
         return list(dict.fromkeys(
@@ -138,10 +146,6 @@ class Settings(BaseSettings):
             for question in self.SECURITY_QUESTIONS.split("|")
             if question.strip()
         ))
-
-    @property
-    def is_sqlite(self) -> bool:
-        return self.DATABASE_URL.startswith("sqlite")
 
     @property
     def upload_path(self) -> Path:

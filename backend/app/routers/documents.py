@@ -5,6 +5,8 @@ Documents are uploaded once at the deal level (processed via Mistral OCR),
 then linked to one or more sections via a multi-select picker.
 """
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session, joinedload
 
@@ -49,11 +51,11 @@ def list_deal_documents(deal_id: str, db: Session = Depends(get_db)):
 )
 async def upload_deal_document(
     deal_id: str,
-    source_type: str = Form(..., description="file, url, or text"),
+    source_type: Literal["file", "url", "text"] = Form(...),
     file: UploadFile | None = File(None),
-    url: str | None = Form(None),
-    text_content: str | None = Form(None),
-    note: str | None = Form(None),
+    url: str | None = Form(None, max_length=2048),
+    text_content: str | None = Form(None, max_length=500_000),
+    note: str | None = Form(None, max_length=4000),
     db: Session = Depends(get_db),
 ):
     """

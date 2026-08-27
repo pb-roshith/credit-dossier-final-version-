@@ -10,7 +10,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base
+from app.database import Base, audit_table_args
 
 
 def _uuid() -> str:
@@ -115,6 +115,13 @@ class Section(Base):
     original_generated_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_generated_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     custom_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    edit_lock_user_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    edit_lock_user_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    edit_lock_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
     # Accuracy assessment (set after generation)
     accuracy_score: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -143,6 +150,7 @@ class Section(Base):
 
 class AuditEntry(Base):
     __tablename__ = "audit_entries"
+    __table_args__ = audit_table_args()
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=lambda: "a_" + uuid.uuid4().hex[:8])
     deal_id: Mapped[str] = mapped_column(ForeignKey("deals.id", ondelete="CASCADE"), nullable=False)

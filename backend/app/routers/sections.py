@@ -16,6 +16,7 @@ from app.config import settings
 from app.database import SessionLocal, get_db
 from app.models.deal import Section
 from app.schemas.deal import (
+    NarrativeEditLockResponse,
     NarrativeVersionResponse,
     SectionResponse,
     SectionUpdate,
@@ -31,7 +32,9 @@ from app.services.narrative_service import NarrativeService
 from app.services.ingestion_service import extract_text_preview
 from app.services.moderation_service import ModerationService
 from app.services.narrative_version_service import NarrativeVersionService
-from app.auth import require_deal_owner
+from app.auth import get_current_user, require_deal_owner
+from app.models.user import User
+from app.narrative_lock import NarrativeLockService
 from app.file_validation import TEMPLATE_EXTENSIONS, UploadValidationError, validate_uploaded_file
 
 router = APIRouter(prefix="/api/deals/{deal_id}/sections", tags=["sections"], dependencies=[Depends(require_deal_owner)])
@@ -137,6 +140,7 @@ async def update_section(
     section_id: str,
     data: SectionUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Update section expected output, custom instructions, output template, or state."""
     update_data = data.model_dump(exclude_unset=True)
@@ -147,6 +151,7 @@ async def update_section(
         existing_section.generated_content if existing_section else None
     )
     if existing_section and "generated_content" in update_data:
+        NarrativeLockService.require_owner(db, deal_id, section_id, current_user)
         NarrativeVersionService.ensure_current(db, existing_section)
     if "source_urls" in update_data:
         update_data["url_scrape_details"] = None
@@ -189,6 +194,32 @@ async def update_section(
 
     DealService.update_deal_status_from_sections(db, deal_id)
     return section
+
+
+@router.post("/{section_id}/edit-lock", response_model=NarrativeEditLockResponse)
+def acquire_narrative_edit_lock(
+    deal_id: str,
+    section_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Acquire or renew the current user's short narrative editing lease."""
+    section = NarrativeLockService.acquire(db, deal_id, section_id, current_user)
+    return NarrativeEditLockResponse(
+        section_id=section.id,
+        locked_by=section.edit_lock_user_name or current_user.user_id,
+        expires_at=section.edit_lock_expires_at,
+    )
+
+
+@router.delete("/{section_id}/edit-lock", status_code=204)
+def release_narrative_edit_lock(
+    deal_id: str,
+    section_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    NarrativeLockService.release(db, deal_id, section_id, current_user)
 
 
 @router.get(
