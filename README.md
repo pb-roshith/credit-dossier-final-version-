@@ -22,16 +22,12 @@ AI-assisted credit pitch-book workflow for relationship managers and credit anal
 ```text
 Credit_Dossier/
 |-- backend/          FastAPI, SQLAlchemy, Mistral agents, services, and tests
-|-- frontend/         Primary React/TanStack application (http://localhost:8080)
-|-- frontend_2/       Alternate UI with Manufacture Data (http://localhost:8081)
+|-- frontend/         React/TanStack application, including Manufacture Data
 |-- mcp/              Local credit-intelligence MCP and data manufacturer
-|-- test-data/        Manual test fixtures
 |-- architecture.md   Current system design and runtime flows
 |-- implementation_plan.md
 `-- run.md            Short local run guide
 ```
-
-Both frontends use the same backend and database. They send different frontend identifiers so each can keep an independent localhost session cookie.
 
 ## Technology
 
@@ -41,7 +37,7 @@ Both frontends use the same backend and database. They send different frontend i
 | Frontend | React 19, TypeScript, TanStack Router/Start, Vite 8 |
 | UI | Tailwind CSS 4, shadcn/ui, Radix UI |
 | AI | Mistral Agents, Document Library, moderation, OCR, and Observability judges |
-| Data | PostgreSQL for the normal local stack; SQLite remains supported by the backend |
+| Data | PostgreSQL |
 | Integration | Model Context Protocol over local SSE |
 | Export | ReportLab/xhtml2pdf, python-docx, python-pptx |
 | Telemetry | Mistral telemetry and optional Arize Phoenix/OpenTelemetry |
@@ -79,8 +75,8 @@ The MCP SSE endpoint is `http://127.0.0.1:8001/sse`. See [mcp/README.md](mcp/REA
 
 ```powershell
 Copy-Item backend\.env.example backend\.env
-# Edit backend\.env. At minimum set MISTRAL_API_KEY, DATABASE_URL,
-# MCP_SSE_URL, and strong passwords for the initial role accounts.
+# MISTRAL_API_KEY and DATABASE_URL are loaded from backend/.data/secrets.
+# Configure MCP_SSE_URL and strong passwords for the initial role accounts.
 
 cd backend
 python -m venv venv
@@ -93,7 +89,7 @@ The API is available at `http://127.0.0.1:8000`; OpenAPI documentation is at `ht
 
 Startup creates missing tables, applies safe additive migrations, seeds configured initial users, connects to MCP when available, and initializes the 16 section agents plus the orchestration agent. MCP connection failure is non-fatal; generation can continue with the available Mistral libraries and manually supplied sources.
 
-### 3. Start a frontend
+### 3. Start the frontend
 
 ```powershell
 cd frontend
@@ -101,7 +97,7 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:8080`. To use the alternate UI, run the same commands in `frontend_2` and open `http://localhost:8081`.
+Open `http://localhost:8080`. The Manufacture Data workflow is available from the main navigation.
 
 For the four-terminal version of these instructions, see [run.md](run.md).
 

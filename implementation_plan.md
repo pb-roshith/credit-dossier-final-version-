@@ -20,7 +20,7 @@ Status labels:
 | Guardrails | Implemented | Mistral moderation for custom instructions and templates |
 | Evidence/evaluation | Implemented | Citations/retrieved sources, claim classification, confidence score |
 | Narrative history | Implemented | Automatic/manual versions, mark final, compare, and delete |
-| Review snapshots | Implemented | Backend and both UIs support frozen submitted-version PDF download |
+| Review snapshots | Implemented | Backend and UI support frozen submitted-version PDF download |
 | Observability | Implemented | Mistral telemetry, optional Phoenix, stored metrics, observability UI |
 | Local MCP | Implemented | Owner-scoped companies, 16 tables, PDF tools, caching, circuit breaker |
 | Synthetic data | Implemented | Background/CLI manufacture of consistent 17-PDF and 16-table company packs |
@@ -32,7 +32,7 @@ Status labels:
 ### 1. Identity and deal access
 
 - `User` and `AuthSession` models persist accounts and hashed session tokens.
-- The backend selects an independent cookie for `frontend` and `frontend_2` using a proxy header.
+- The backend uses one HTTP-only session cookie for the application frontend.
 - Relationship Managers see only owned deals and are the only role allowed to create or submit them.
 - Credit Analysts can access all deals and are the only role allowed to approve or deny submitted versions.
 - MCP company requests include the application user ID, preventing cross-owner company-data access.
@@ -121,11 +121,11 @@ Manufacturing first creates a shared borrower context, then produces 17 substant
 - [x] Add `snapshot_json` to the `Version` model and additive migrations.
 - [x] Capture the current deal and section draft at submission time.
 - [x] Render a frozen version as PDF, with historical fallback for old versions.
-- [x] Add submitted-version download handling to both frontends.
+- [x] Add submitted-version download handling to the frontend.
 - [ ] Add focused tests proving that edits after submission do not alter a downloaded snapshot.
 - [ ] Add tests for legacy pre-snapshot reconstruction and invalid snapshot handling.
 
-Acceptance criteria: a submitted PDF is byte/content-stable with respect to later deal edits, both frontends can download it, and access remains deal-scoped.
+Acceptance criteria: a submitted PDF is byte/content-stable with respect to later deal edits, the frontend can download it, and access remains deal-scoped.
 
 ### Priority 1 - consolidate document ingestion
 
@@ -135,7 +135,7 @@ Acceptance criteria: a submitted PDF is byte/content-stable with respect to late
 - [ ] Deprecate compatibility endpoints in OpenAPI before removal.
 - [x] Removed unused vector-store configuration and dependency after confirming no code path relies on it.
 
-Acceptance criteria: one primary upload model is used by both frontends and generation, with a tested migration/rollback path for older records.
+Acceptance criteria: one primary upload model is used by the frontend and generation, with a tested migration/rollback path for older records.
 
 ### Priority 1 - security hardening
 
@@ -170,9 +170,9 @@ Acceptance criteria: releases have repeatable quality scores and regressions can
 
 ### Priority 3 - frontend consolidation
 
-- [ ] Define whether `frontend_2` remains a supported product variant or becomes a feature branch of one frontend.
-- [ ] Share API types/components or generate the client from OpenAPI to prevent drift.
-- [ ] Move Manufacture Data behind role/environment controls rather than maintaining broad UI duplication.
+- [x] Consolidate Manufacture Data into the primary frontend and remove the duplicate UI.
+- [ ] Generate the client from OpenAPI to prevent API type drift.
+- [ ] Move Manufacture Data behind role/environment controls.
 - [ ] Add end-to-end tests for login, deal generation, source inspection, review, snapshot download, and export.
 
 Acceptance criteria: supported UI variants expose intentional differences only and share a single tested API contract.
@@ -190,7 +190,7 @@ Acceptance criteria: supported UI variants expose intentional differences only a
 | Versions | Narrative final/delete tests; frozen snapshot download tests | Submit, edit afterward, then download old version |
 | Exports | Parse/smoke-test PDF, DOCX, and PPTX outputs | Check tables, markdown, theme, and filenames |
 | Observability | Metrics serialization and trace setup tests | Inspect `/observability`, Mistral, and Phoenix traces |
-| Frontends | `npm run build`, lint, targeted component/E2E tests | Exercise both ports with independent users |
+| Frontend | `npm run build`, lint, targeted component/E2E tests | Exercise primary workflows on port 8080 |
 
 Suggested local commands:
 
@@ -202,9 +202,6 @@ cd ..\frontend
 npm run build
 npm run lint
 
-cd ..\frontend_2
-npm run build
-npm run lint
 ```
 
 Tests requiring Mistral, PostgreSQL, MCP, or Phoenix should clearly distinguish unit/mocked runs from live integration runs and must not rely on committed secrets.

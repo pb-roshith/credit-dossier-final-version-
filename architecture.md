@@ -1,18 +1,15 @@
 # Credit Dossier Architecture
 
-This document describes the current architecture. Credit Dossier is a FastAPI monolith with two React clients, a local credit-intelligence MCP, Mistral-managed agents and document libraries, and relational persistence.
+This document describes the current architecture. Credit Dossier is a FastAPI monolith with one React client, a local credit-intelligence MCP, Mistral-managed agents and document libraries, and relational persistence.
 
 ## System context
 
 ```mermaid
 flowchart LR
-    RM[Relationship Manager] --> UI1[Primary frontend :8080]
+    RM[Relationship Manager] --> UI1[Frontend :8080]
     CA[Credit Analyst] --> UI1
-    RM --> UI2[Alternate frontend :8081]
-    CA --> UI2
 
     UI1 -->|REST + session cookie| API[FastAPI :8000]
-    UI2 -->|REST + separate session cookie| API
 
     API --> APPDB[(Backend DB)]
     API --> DISK[(Upload/template storage)]
@@ -34,8 +31,7 @@ flowchart LR
 
 | Component | Responsibilities |
 |---|---|
-| `frontend/` | Primary authenticated UI for deals, narratives, sources, version review, exports, profile, and observability |
-| `frontend_2/` | Alternate UI on port 8081, including the Manufacture Data workflow |
+| `frontend/` | Authenticated UI for deals, narratives, sources, version review, exports, profile, observability, and Manufacture Data |
 | `backend/app/routers/` | HTTP boundary, validation, session/role enforcement, streaming downloads |
 | `backend/app/services/` | Deal workflow, ingestion, library sync, orchestration, generation, moderation, evaluation, versions, exports, MCP calls, and URL scraping |
 | `backend/app/agents/` | Section instructions, orchestration prompts, registry, and 16 section agent definitions |
@@ -47,7 +43,7 @@ flowchart LR
 
 Passwords are stored as PBKDF2-SHA256 hashes. Raw session tokens are returned only as HTTP-only cookies; only SHA-256 token hashes are persisted. Sessions expire after 12 hours.
 
-The two localhost clients use distinct cookie names selected by the `x-credit-dossier-frontend` proxy header. This lets a developer use different accounts in the two clients simultaneously.
+The frontend uses the backend's HTTP-only application session cookie.
 
 Authorization is enforced in backend dependencies:
 
@@ -180,5 +176,6 @@ Shutdown removes the temporary global Mistral agents/connectors and disconnects 
 - Mistral telemetry is configured with redaction for financial content.
 - URL sources are explicitly stored per section and validated before scraping.
 - MCP caching has a TTL and circuit breaker to limit repeated failures.
-- SQLite is supported for development, but the documented integrated stack uses PostgreSQL and separates backend and MCP databases.
+- PostgreSQL is the only supported application database; backend and MCP databases remain separated.
+- Backend database and Mistral credentials are loaded from the DPAPI/AES-GCM protected local secret store.
 - Local file storage is suitable for development. Production deployment should use durable object storage, managed secrets, HTTPS/secure cookies, controlled CORS origins, and a real migration/deployment process.

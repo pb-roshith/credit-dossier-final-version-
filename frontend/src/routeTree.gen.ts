@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as ObservabilityRouteImport } from './routes/observability'
+import { Route as ManufactureDataRouteImport } from './routes/manufacture-data'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as IndexRouteImport } from './routes/index'
@@ -25,6 +26,11 @@ const ProfileRoute = ProfileRouteImport.update({
 const ObservabilityRoute = ObservabilityRouteImport.update({
   id: '/observability',
   path: '/observability',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ManufactureDataRoute = ManufactureDataRouteImport.update({
+  id: '/manufacture-data',
+  path: '/manufacture-data',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -57,6 +63,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
+  '/manufacture-data': typeof ManufactureDataRoute
   '/observability': typeof ObservabilityRoute
   '/profile': typeof ProfileRoute
   '/deals/$dealId': typeof DealsDealIdRoute
@@ -66,6 +73,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
+  '/manufacture-data': typeof ManufactureDataRoute
   '/observability': typeof ObservabilityRoute
   '/profile': typeof ProfileRoute
   '/deals/$dealId': typeof DealsDealIdRoute
@@ -76,6 +84,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
+  '/manufacture-data': typeof ManufactureDataRoute
   '/observability': typeof ObservabilityRoute
   '/profile': typeof ProfileRoute
   '/deals/$dealId': typeof DealsDealIdRoute
@@ -87,6 +96,7 @@ export interface FileRouteTypes {
     | '/'
     | '/dashboard'
     | '/login'
+    | '/manufacture-data'
     | '/observability'
     | '/profile'
     | '/deals/$dealId'
@@ -96,6 +106,7 @@ export interface FileRouteTypes {
     | '/'
     | '/dashboard'
     | '/login'
+    | '/manufacture-data'
     | '/observability'
     | '/profile'
     | '/deals/$dealId'
@@ -105,6 +116,7 @@ export interface FileRouteTypes {
     | '/'
     | '/dashboard'
     | '/login'
+    | '/manufacture-data'
     | '/observability'
     | '/profile'
     | '/deals/$dealId'
@@ -115,6 +127,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DashboardRoute: typeof DashboardRoute
   LoginRoute: typeof LoginRoute
+  ManufactureDataRoute: typeof ManufactureDataRoute
   ObservabilityRoute: typeof ObservabilityRoute
   ProfileRoute: typeof ProfileRoute
   DealsDealIdRoute: typeof DealsDealIdRoute
@@ -135,6 +148,13 @@ declare module '@tanstack/react-router' {
       path: '/observability'
       fullPath: '/observability'
       preLoaderRoute: typeof ObservabilityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/manufacture-data': {
+      id: '/manufacture-data'
+      path: '/manufacture-data'
+      fullPath: '/manufacture-data'
+      preLoaderRoute: typeof ManufactureDataRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -179,6 +199,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DashboardRoute: DashboardRoute,
   LoginRoute: LoginRoute,
+  ManufactureDataRoute: ManufactureDataRoute,
   ObservabilityRoute: ObservabilityRoute,
   ProfileRoute: ProfileRoute,
   DealsDealIdRoute: DealsDealIdRoute,

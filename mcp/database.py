@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 import psycopg
 from psycopg import sql
@@ -295,6 +295,7 @@ def get_document(owner_user_id: str, company_name: str, document_name: str) -> d
 def seed_credit_tables(
     company_id: int,
     rows_by_table: dict[str, list[dict[str, object]]],
+    progress_callback: Callable[[str, int], None] | None = None,
 ) -> int:
     inserted = 0
     with connection() as conn:
@@ -375,6 +376,8 @@ def seed_credit_tables(
                     ),
                 )
                 inserted += 1
+            if progress_callback:
+                progress_callback(table_name, len(rows))
         conn.commit()
     return inserted
 

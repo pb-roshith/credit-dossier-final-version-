@@ -13,16 +13,16 @@ export default defineConfig({
         behavior: "error",
         client: {
           files: ["**/server/**"],
-          specifiers: ["server-only"]
-        }
-      }
+          specifiers: ["server-only"],
+        },
+      },
     }),
     react(),
     tailwindcss(),
   ],
   resolve: {
     alias: {
-      "@": `${process.cwd()}/src`
+      "@": `${process.cwd()}/src`,
     },
     dedupe: [
       "react",
@@ -30,12 +30,18 @@ export default defineConfig({
       "react/jsx-runtime",
       "react/jsx-dev-runtime",
       "@tanstack/react-query",
-      "@tanstack/query-core"
-    ]
+      "@tanstack/query-core",
+    ],
   },
   optimizeDeps: {
-    include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime"],
-    ignoreOutdatedRequests: true
+    include: [
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "react/jsx-runtime",
+      "react/jsx-dev-runtime",
+    ],
+    ignoreOutdatedRequests: true,
   },
   server: {
     host: "localhost",
@@ -44,10 +50,7 @@ export default defineConfig({
       "/api": {
         target: "http://localhost:8000",
         changeOrigin: true,
-        headers: {
-          "x-credit-dossier-frontend": "frontend",
-        },
       },
     },
-  }
+  },
 });

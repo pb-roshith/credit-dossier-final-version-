@@ -17,20 +17,14 @@ from app.models.user import AuthSession, User
 
 
 SESSION_COOKIE = "credit_dossier_session"
-FRONTEND_SESSION_COOKIES = {
-    "frontend": "credit_dossier_session_frontend",
-    "frontend_2": "credit_dossier_session_frontend_2",
-}
-FRONTEND_HEADER = "x-credit-dossier-frontend"
 SESSION_HOURS = 12
 PBKDF2_ITERATIONS = 600_000
 ALLOWED_ROLES = {"relationship_manager", "credit_analyst"}
 
 
 def session_cookie_name(request: Request) -> str:
-    """Use independent cookies for the two localhost frontend applications."""
-    frontend_id = request.headers.get(FRONTEND_HEADER, "").strip().lower()
-    return FRONTEND_SESSION_COOKIES.get(frontend_id, SESSION_COOKIE)
+    """Return the single application session cookie name."""
+    return SESSION_COOKIE
 
 
 def validate_password_strength(password: str, user_id: str | None = None) -> None:

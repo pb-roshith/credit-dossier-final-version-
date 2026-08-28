@@ -6,6 +6,7 @@ import argparse
 import io
 import json
 import logging
+from typing import Callable
 from xml.sax.saxutils import escape
 
 from mistralai.client import Mistral
@@ -46,6 +47,7 @@ from settings import settings
 
 logger = logging.getLogger("local_mcp.manufacture")
 GENERATOR_VERSION = 2
+ProgressCallback = Callable[[str, str, int, int, str | None], None]
 
 
 MAX_TABLE_COLUMNS = 4
@@ -195,6 +197,7 @@ def create_pdf_payloads(
     context: dict[str, object],
     generator: ManufacturingAgent | None = None,
     summaries: dict[str, str] | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict[str, bytes]:
     """Generate all PDFs in memory so no local staging files are retained."""
     payloads: dict[str, bytes] = {}
@@ -213,6 +216,14 @@ def create_pdf_payloads(
         if summaries is not None:
             summaries[filename] = summary
         payloads[filename] = buffer.getvalue()
+        if progress_callback:
+            progress_callback(
+                "pdf_generation",
+                f"Generated {filename}",
+                len(payloads),
+                len(PDF_FILES),
+                filename,
+            )
     return payloads
 
 
@@ -234,6 +245,7 @@ def upload_pdfs_to_mistral(
     context: dict[str, object],
     pdf_payloads: dict[str, bytes],
     summaries: dict[str, str],
+    progress_callback: ProgressCallback | None = None,
 ) -> tuple[str | None, int, str | None]:
     """Upload missing/outdated PDFs and return library ID, count, and error."""
     if not settings.mistral_api_key:
@@ -279,6 +291,14 @@ def upload_pdfs_to_mistral(
                     "uploaded",
                     GENERATOR_VERSION,
                 )
+                if progress_callback:
+                    progress_callback(
+                        "pdf_upload",
+                        f"Verified existing upload for {filename}",
+                        number,
+                        len(PDF_FILES),
+                        filename,
+                    )
                 continue
             if existing_document and existing_document.get("mistral_document_id"):
                 try:
@@ -311,6 +331,14 @@ def upload_pdfs_to_mistral(
                 GENERATOR_VERSION,
             )
             uploaded_count += 1
+            if progress_callback:
+                progress_callback(
+                    "pdf_upload",
+                    f"Uploaded {filename}",
+                    number,
+                    len(PDF_FILES),
+                    filename,
+                )
         return library_id, uploaded_count, None
     except Exception as exc:
         logger.exception("Mistral Library upload failed")
@@ -322,6 +350,7 @@ def manufacture_company_data(
     company_name: str,
     industry: str,
     geography: str,
+    progress_callback: ProgressCallback | None = None,
 ) -> dict[str, object]:
     """Create or refresh one company's complete local MCP data pack."""
     if not company_name.strip() or not industry.strip() or not geography.strip():
@@ -329,6 +358,8 @@ def manufacture_company_data(
 
     logger.info("Initialising PostgreSQL schema")
     init_db()
+    if progress_callback:
+        progress_callback("initialization", "PostgreSQL schema ready", 1, 1, None)
     fallback_context = build_company_context(
         company_name.strip(),
         industry.strip(),
@@ -338,6 +369,8 @@ def manufacture_company_data(
     with ManufacturingAgent() as generator:
         logger.info("Generating detailed shared borrower context")
         context = generator.generate_context(fallback_context)
+        if progress_callback:
+            progress_callback("context", "Borrower context generated", 1, 1, None)
         company = upsert_company(
             owner_user_id, company_name, industry, geography, context
         )
@@ -347,16 +380,25 @@ def manufacture_company_data(
             context,
             generator,
             summaries,
+            progress_callback,
         )
 
         logger.info("Generating detailed rows for 16 PostgreSQL credit tables")
         rows_by_table = table_seed_rows(context)
-        for table_name in FINANCIAL_AI_TABLES:
+        for table_number, table_name in enumerate(FINANCIAL_AI_TABLES, start=1):
             rows_by_table[table_name] = generator.generate_financial_rows(
                 table_name,
                 context,
                 rows_by_table[table_name],
             )
+            if progress_callback:
+                progress_callback(
+                    "table_generation",
+                    f"Generated detailed rows for {table_name}",
+                    table_number,
+                    len(FINANCIAL_AI_TABLES),
+                    table_name,
+                )
         used_ai_generation = generator.available
 
     company = get_company(owner_user_id, company_name) or company
@@ -367,10 +409,27 @@ def manufacture_company_data(
         context,
         pdf_payloads,
         summaries,
+        progress_callback,
     )
 
     logger.info("Seeding detailed data into 16 PostgreSQL credit tables")
-    seeded_rows = seed_credit_tables(company["id"], rows_by_table)
+    seeded_tables = 0
+
+    def report_seeded_table(table_name: str, row_count: int) -> None:
+        nonlocal seeded_tables
+        seeded_tables += 1
+        if progress_callback:
+            progress_callback(
+                "table_seed",
+                f"Seeded {table_name} ({row_count} rows)",
+                seeded_tables,
+                len(TABLE_NAMES),
+                table_name,
+            )
+
+    seeded_rows = seed_credit_tables(
+        company["id"], rows_by_table, report_seeded_table
+    )
 
     return {
         "companyName": company_name,
@@ -398,17 +457,41 @@ def main() -> None:
     parser.add_argument("--industry", required=True)
     parser.add_argument("--geography", required=True)
     parser.add_argument("--json", action="store_true", dest="as_json")
+    parser.add_argument("--progress-json", action="store_true")
     args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(message)s",
     )
+    def emit_progress(
+        phase: str,
+        stage: str,
+        completed: int,
+        total: int,
+        item: str | None,
+    ) -> None:
+        if args.progress_json:
+            print(
+                json.dumps(
+                    {
+                        "type": "progress",
+                        "phase": phase,
+                        "stage": stage,
+                        "completed": completed,
+                        "total": total,
+                        "item": item,
+                    }
+                ),
+                flush=True,
+            )
+
     result = manufacture_company_data(
         args.owner_user_id,
         args.company_name,
         args.industry,
         args.geography,
+        emit_progress,
     )
     if args.as_json:
         print(json.dumps(result, default=str))

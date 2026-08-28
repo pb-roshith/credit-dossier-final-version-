@@ -292,6 +292,12 @@ export type ManufactureJob = {
   stage: string;
   result: ManufactureResult | null;
   error: string | null;
+  phase: string;
+  generated_pdfs: string[];
+  uploaded_pdfs: string[];
+  completed_tables: string[];
+  pdf_total: number;
+  table_total: number;
 };
 
 // ── Fetch helpers ──────────────────────────────────────────────

@@ -1,5 +1,13 @@
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { Activity, BookOpen, LayoutDashboard, FilePlus2, LogOut, UserRound } from "lucide-react";
+import {
+  Activity,
+  BookOpen,
+  Factory,
+  LayoutDashboard,
+  FilePlus2,
+  LogOut,
+  UserRound,
+} from "lucide-react";
 import { useAuth } from "@/lib/auth";
 
 export function AppHeader() {
@@ -9,6 +17,7 @@ export function AppHeader() {
   const isDashboard = pathname === "/" || pathname === "/dashboard";
   const isNew = pathname.startsWith("/deals/new");
   const isObservability = pathname.startsWith("/observability");
+  const isManufacture = pathname.startsWith("/manufacture-data");
 
   const tabCls = (active: boolean) =>
     `flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium ${
@@ -38,6 +47,9 @@ export function AppHeader() {
           )}
           <Link to="/observability" className={tabCls(isObservability)}>
             <Activity className="h-4 w-4" /> Observability
+          </Link>
+          <Link to="/manufacture-data" className={tabCls(isManufacture)}>
+            <Factory className="h-4 w-4" /> Manufacture Data
           </Link>
         </div>
         <div className="flex items-center gap-3">

@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.auth import get_current_user
+from app.config import settings
 from app.models.user import User
 
 
@@ -43,6 +44,45 @@ class ManufactureJob(BaseModel):
     stage: str
     result: dict[str, Any] | None = None
     error: str | None = None
+    phase: str = "queued"
+    generated_pdfs: list[str] = Field(default_factory=list)
+    uploaded_pdfs: list[str] = Field(default_factory=list)
+    completed_tables: list[str] = Field(default_factory=list)
+    pdf_total: int = 17
+    table_total: int = 16
+
+
+def _progress_percent(phase: str, completed: int, total: int) -> int:
+    ranges = {
+        "initialization": (1, 4),
+        "context": (4, 8),
+        "pdf_generation": (8, 48),
+        "table_generation": (48, 62),
+        "pdf_upload": (62, 84),
+        "table_seed": (84, 99),
+    }
+    start, end = ranges.get(phase, (1, 99))
+    return min(99, round(start + (end - start) * completed / max(total, 1)))
+
+
+def _apply_progress(job_id: str, event: dict[str, Any]) -> None:
+    phase = str(event.get("phase") or "running")
+    completed = int(event.get("completed") or 0)
+    total = int(event.get("total") or 1)
+    item = event.get("item")
+    with _jobs_lock:
+        job = _jobs[job_id]
+        if item and phase == "pdf_generation" and item not in job["generated_pdfs"]:
+            job["generated_pdfs"].append(item)
+        elif item and phase == "pdf_upload" and item not in job["uploaded_pdfs"]:
+            job["uploaded_pdfs"].append(item)
+        elif item and phase == "table_seed" and item not in job["completed_tables"]:
+            job["completed_tables"].append(item)
+        job.update(
+            phase=phase,
+            stage=str(event.get("stage") or "Manufacturing data"),
+            percent=_progress_percent(phase, completed, total),
+        )
 
 
 def _set_job(job_id: str, **updates: Any) -> None:
@@ -69,25 +109,64 @@ def _run_manufacturing(job_id: str, owner_key: str, request: ManufactureRequest)
         "--geography",
         request.geography,
         "--json",
+        "--progress-json",
     ]
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             command,
             cwd=MCP_DIR,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=30 * 60,
-            check=False,
+            bufsize=1,
         )
-        if completed.returncode != 0:
-            error = completed.stderr.strip() or completed.stdout.strip()
+        output_lines: list[str] = []
+        timed_out = threading.Event()
+
+        def expire_process() -> None:
+            timed_out.set()
+            process.kill()
+
+        timeout_timer = threading.Timer(
+            settings.MANUFACTURE_TIMEOUT_SECONDS, expire_process
+        )
+        timeout_timer.start()
+        assert process.stdout is not None
+        try:
+            for raw_line in process.stdout:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                output_lines.append(line)
+                try:
+                    message = json.loads(line)
+                except json.JSONDecodeError:
+                    message = None
+                if isinstance(message, dict) and message.get("type") == "progress":
+                    _apply_progress(job_id, message)
+        finally:
+            timeout_timer.cancel()
+        return_code = process.wait()
+        if timed_out.is_set():
+            raise TimeoutError(
+                f"Manufacturing exceeded {settings.MANUFACTURE_TIMEOUT_SECONDS} seconds."
+            )
+        if return_code != 0:
+            error = "\n".join(output_lines[-20:])
             raise RuntimeError(error or "Manufacturing process failed.")
-        output_lines = [
-            line.strip() for line in completed.stdout.splitlines() if line.strip()
-        ]
         if not output_lines:
             raise RuntimeError("Manufacturing process returned no result.")
-        result = json.loads(output_lines[-1])
+        result = None
+        for line in reversed(output_lines):
+            try:
+                candidate = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict) and candidate.get("type") != "progress":
+                result = candidate
+                break
+        if result is None:
+            raise RuntimeError("Manufacturing process returned no final result.")
         from app.services.mcp_service import MCPClientService
         MCPClientService.invalidate_cache(request.company_name, owner_key)
         _set_job(
@@ -95,6 +174,7 @@ def _run_manufacturing(job_id: str, owner_key: str, request: ManufactureRequest)
             status="completed",
             percent=100,
             stage="Manufacturing completed",
+            phase="completed",
             result=result,
         )
     except Exception as exc:
@@ -103,6 +183,7 @@ def _run_manufacturing(job_id: str, owner_key: str, request: ManufactureRequest)
             status="failed",
             percent=100,
             stage="Manufacturing failed",
+            phase="failed",
             error=str(exc),
         )
 
@@ -124,6 +205,12 @@ def start_manufacturing(
         "result": None,
         "error": None,
         "owner_user_id": current_user.id,
+        "phase": "queued",
+        "generated_pdfs": [],
+        "uploaded_pdfs": [],
+        "completed_tables": [],
+        "pdf_total": 17,
+        "table_total": 16,
     }
     with _jobs_lock:
         _jobs[job_id] = job
