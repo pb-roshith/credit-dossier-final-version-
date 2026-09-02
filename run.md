@@ -64,15 +64,6 @@ cd frontend
 npm install
 ```
 
-## Verify the local MCP
-
-With the MCP server running:
-
-```powershell
-$env:MCP_SSE_URL="http://127.0.0.1:8001/sse"
-& .\backend\venv\Scripts\python.exe backend\test_mcp.py
-```
-
 The `.env` files contain secrets and are ignored by Git. Do not commit them.
 
 ## Optional: manufacture a detailed test company from MCP

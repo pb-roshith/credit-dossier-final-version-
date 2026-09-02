@@ -10,6 +10,7 @@ import logging
 import os
 import re
 import secrets
+import time
 from ctypes import wintypes
 from pathlib import Path
 from threading import Lock
@@ -89,7 +90,26 @@ def _load_tokenization_key() -> bytes:
         key_path = Path(settings.DPAPI_KEY_FILE).expanduser().resolve()
         key_path.parent.mkdir(parents=True, exist_ok=True)
         if key_path.exists():
-            return _dpapi_transform(key_path.read_bytes(), protect=False)
+            try:
+                return _dpapi_transform(key_path.read_bytes(), protect=False)
+            except KeyManagementError:
+                # A development checkout may be moved between Windows users,
+                # machines, or service identities. DPAPI intentionally makes
+                # the old key unreadable in that situation. Preserve it for
+                # diagnosis and create a key owned by the current identity.
+                # Production remains fail-closed so token stability cannot
+                # silently change there.
+                if settings.APP_ENV.lower() == "production":
+                    raise
+                invalid_path = key_path.with_name(
+                    f"{key_path.name}.unreadable-{time.time_ns()}"
+                )
+                os.replace(key_path, invalid_path)
+                logger.warning(
+                    "Preserved an unreadable DPAPI tokenization key at %s and "
+                    "will generate a new development key.",
+                    invalid_path,
+                )
         key = secrets.token_bytes(32)
         protected = _dpapi_transform(key, protect=True)
         temporary = key_path.with_suffix(key_path.suffix + ".tmp")

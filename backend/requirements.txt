@@ -12,7 +12,7 @@ psycopg>=3.3.4
 
 # Validation & Settings
 pydantic>=2.13.0
-pydantic-settings>=2.14.0
+pydantic-settings>=2.14.2
 
 # Security-sensitive dependency used by PDF signing/validation packages
 cryptography>=50.0.0

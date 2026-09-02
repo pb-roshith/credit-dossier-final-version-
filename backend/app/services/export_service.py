@@ -147,7 +147,7 @@ def _markdown_to_html_with_graphs(text: str, theme_palette: list[str]) -> str:
         return formatted_table
 
     transformed = table_pattern.sub(replacer, text)
-    html = markdown.markdown(transformed, extensions=['tables'])
+    rendered_html = markdown.markdown(transformed, extensions=['tables'])
     
     # Post-process HTML to force equal column widths in PDF
     def fix_table_widths(match):
@@ -171,9 +171,14 @@ def _markdown_to_html_with_graphs(text: str, theme_palette: list[str]) -> str:
         table_html = re.sub(r'<(th|td)\b([^>]*)>', f'<\\1 width="{width_pct}%" \\2>', table_html, flags=re.IGNORECASE)
         return table_html
 
-    html = re.sub(r'<table\b.*?>.*?</table>', fix_table_widths, html, flags=re.DOTALL | re.IGNORECASE)
+    rendered_html = re.sub(
+        r'<table\b.*?>.*?</table>',
+        fix_table_widths,
+        rendered_html,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
     
-    return html
+    return rendered_html
 
 
 class ExportService:

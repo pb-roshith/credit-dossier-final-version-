@@ -2849,6 +2849,7 @@ function ExportTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       refresh();
     } catch (err) {
       console.error(`Export ${format} failed:`, err);
+      alert(err instanceof Error ? err.message : `Export ${format.toUpperCase()} failed.`);
     } finally {
       setExporting(null);
     }
@@ -2861,6 +2862,7 @@ function ExportTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       refresh();
     } catch (err) {
       console.error("Report generation failed:", err);
+      alert(err instanceof Error ? err.message : "Report generation failed.");
     } finally {
       setGeneratingReport(false);
     }

@@ -193,10 +193,7 @@ Acceptance criteria: the frontend has a single tested API contract.
 Suggested local commands:
 
 ```powershell
-cd backend
-pytest
-
-cd ..\frontend
+cd frontend
 npm run build
 npm run lint
 

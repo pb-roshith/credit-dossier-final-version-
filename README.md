@@ -230,19 +230,10 @@ that header; otherwise the direct network peer address is recorded.
 ## Verification
 
 ```powershell
-# Backend tests
-cd backend
-pytest
-
 # Primary frontend
-cd ..\frontend
+cd frontend
 npm run build
 npm run lint
-
-# Local MCP smoke test (MCP must be running)
-cd ..
-$env:MCP_SSE_URL="http://127.0.0.1:8001/sse"
-& .\backend\venv\Scripts\python.exe backend\test_mcp.py
 ```
 
 ## Further documentation

@@ -558,9 +558,12 @@ export const api = {
       if (!res.ok) throw await apiErrorFromResponse(res, "Report generation failed.");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
+      const contentDisposition = res.headers.get("content-disposition");
+      const filename =
+        contentDisposition?.match(/filename="(.+)"/)?.[1] || "CreditReport.pdf";
       const a = document.createElement("a");
       a.href = url;
-      a.download = "CreditReport.pdf";
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
