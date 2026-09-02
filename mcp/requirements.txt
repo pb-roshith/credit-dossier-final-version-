@@ -1,7 +1,18 @@
-mcp>=1.28.0
-mistralai>=2.7.0
+# Model Context Protocol
+mcp==1.28.1
+
+# Mistral AI SDK
+mistralai==2.7.2
+
+# PostgreSQL Driver
 # Use the patched system libpq instead of psycopg-binary's bundled library.
-psycopg>=3.3.4
-python-dotenv>=1.2.0
-reportlab>=4.5.0
-cryptography>=50.0.0
+psycopg==3.3.4
+
+# Environment Configuration
+python-dotenv==1.2.2
+
+# PDF Generation
+reportlab==4.5.1
+
+# Security and Cryptography
+cryptography==50.0.0
