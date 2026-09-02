@@ -19,6 +19,14 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from sqlalchemy.orm import Session, joinedload
+from reportlab import rl_config
+
+# CVE-2020-28463: PDF exports only need locally generated data: images. A
+# non-routable sentinel keeps ReportLab's host allowlist enabled while the
+# scheme allowlist blocks HTTP(S), file, FTP, and other external resources.
+rl_config.trustedHosts = ["no-remote-resources.invalid"]
+rl_config.trustedSchemes = ["data"]
+
 from xhtml2pdf import pisa
 from html2docx import html2docx
 

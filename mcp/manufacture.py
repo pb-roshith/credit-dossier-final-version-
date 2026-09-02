@@ -9,6 +9,13 @@ import logging
 from xml.sax.saxutils import escape
 
 from mistralai.client import Mistral
+from reportlab import rl_config
+
+# CVE-2020-28463: synthetic PDFs do not retrieve remote or local resources.
+# Keep only data: available for any future application-generated image.
+rl_config.trustedHosts = ["no-remote-resources.invalid"]
+rl_config.trustedSchemes = ["data"]
+
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
