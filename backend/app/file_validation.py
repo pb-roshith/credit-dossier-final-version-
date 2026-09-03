@@ -18,6 +18,9 @@ _OOXML_DIRECTORIES = {
     ".xlsx": "xl/",
     ".pptx": "ppt/",
 }
+_OOXML_ALLOWED_COMPRESSION = frozenset(
+    {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
+)
 _OLE_SIGNATURE = bytes.fromhex("D0CF11E0A1B11AE1")
 
 
@@ -36,7 +39,14 @@ def _safe_filename(filename: str | None) -> str:
 def _validate_ooxml(file_bytes: bytes, extension: str) -> bool:
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
-            names = archive.namelist()
+            entries = archive.infolist()
+            if any(
+                entry.compress_type not in _OOXML_ALLOWED_COMPRESSION
+                for entry in entries
+            ):
+                return False
+
+            names = [entry.filename for entry in entries]
             return "[Content_Types].xml" in names and any(
                 name.startswith(_OOXML_DIRECTORIES[extension]) for name in names
             )
