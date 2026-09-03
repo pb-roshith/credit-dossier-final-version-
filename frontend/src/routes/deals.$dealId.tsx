@@ -2880,6 +2880,8 @@ function ExportTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       formData.append("file", file);
       const res = await fetch(`/api/deals/${deal.id}/theme/extract`, {
         method: "POST",
+        // CSRF mitigation is enforced server-side with same-origin validation.
+        credentials: "same-origin",
         body: formData,
       });
       if (!res.ok) throw await apiErrorFromResponse(res, "Theme extraction failed.");
@@ -2915,6 +2917,8 @@ function ExportTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
 
       const res = await fetch(`/api/deals/${deal.id}`, {
         method: "PATCH",
+        // CSRF mitigation is enforced server-side with same-origin validation.
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
