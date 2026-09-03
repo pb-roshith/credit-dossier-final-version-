@@ -60,7 +60,9 @@ function LoginPage() {
     const timer = window.setTimeout(() => {
       getAccountStatus(normalizedUserId)
         .then((result) =>
-          setApprovalMessage(result.status === "pending" ? (result.message ?? null) : null),
+          setApprovalMessage(
+            result.status === "pending" ? "This account is awaiting administrator approval." : null,
+          ),
         )
         .catch(() => setApprovalMessage(null));
     }, 350);
@@ -77,12 +79,9 @@ function LoginPage() {
         const questions = await getResetQuestions(userId.trim());
         setSecurityResponses(questions.map((question) => ({ question, answer: "" })));
         setResetQuestionsLoaded(true);
-      } catch (requestError) {
-        setError(
-          requestError instanceof Error
-            ? requestError.message
-            : "Unable to load recovery questions.",
-        );
+      } catch {
+        // Keep recovery failures generic to avoid exposing account or backend details.
+        setError("Unable to continue with password recovery.");
       } finally {
         setSubmitting(false);
       }
@@ -114,13 +113,13 @@ function LoginPage() {
         setShowConfirmPassword(false);
         return;
       } else {
-        const message = await resetPassword({
+        await resetPassword({
           user_id: userId.trim(),
           security_questions: securityResponses,
           new_password: password,
           confirm_password: confirmPassword,
         });
-        setSuccess(message);
+        setSuccess("Password reset successfully. You can now sign in.");
         setMode("login");
         setPassword("");
         setConfirmPassword("");
@@ -128,8 +127,15 @@ function LoginPage() {
         setShowConfirmPassword(false);
         return;
       }
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to continue.");
+    } catch {
+      // Authentication responses may contain confidential implementation or account details.
+      setError(
+        mode === "login"
+          ? "Sign-in failed. Check your credentials and try again."
+          : mode === "register"
+            ? "Unable to create the account. Review your entries and try again."
+            : "Unable to reset the password. Verify your answers and try again.",
+      );
     } finally {
       setSubmitting(false);
     }

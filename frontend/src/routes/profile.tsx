@@ -76,8 +76,9 @@ function ProfilePage() {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Password change failed.");
+    } catch {
+      // Do not surface authentication or backend details from a failed request.
+      setError("Password change failed. Verify your current password and try again.");
     } finally {
       setSaving(false);
     }
@@ -102,12 +103,9 @@ function ProfilePage() {
       );
       setSecurityPassword("");
       setSecurityResponses((current) => current.map((item) => ({ ...item, answer: "" })));
-    } catch (requestError) {
-      setQuestionError(
-        requestError instanceof Error
-          ? requestError.message
-          : "Unable to update security questions.",
-      );
+    } catch {
+      // Security-question failures can contain confidential authentication details.
+      setQuestionError("Unable to update security questions. Verify your password and try again.");
     } finally {
       setSavingQuestions(false);
     }
