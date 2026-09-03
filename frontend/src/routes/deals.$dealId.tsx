@@ -70,7 +70,8 @@ function DealDetail() {
       api.deals
         .get(dealId)
         .then(setDeal)
-        .catch((err) => setError(err.message))
+        // Do not expose backend error details; show a generic user-facing message.
+        .catch(() => setError("Unable to load this deal. Please try again."))
         .finally(() => setLoading(false));
     },
     [dealId],

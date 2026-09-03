@@ -50,7 +50,8 @@ function Dashboard() {
 
     api.deals.list({ status: statusParam, search: q || undefined })
       .then(setDeals)
-      .catch(err => setError(err.message))
+      // Security: do not expose backend error details to users.
+      .catch(() => setError("Unable to load deals. Please try again."))
       .finally(() => setLoading(false));
   };
 

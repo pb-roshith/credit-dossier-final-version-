@@ -50,13 +50,8 @@ function ProfilePage() {
           result.security_questions.slice(0, 3).map((question) => ({ question, answer: "" })),
         );
       })
-      .catch((requestError) =>
-        setQuestionError(
-          requestError instanceof Error
-            ? requestError.message
-            : "Unable to load security settings.",
-        ),
-      );
+      // Security: do not expose backend error details to users.
+      .catch(() => setQuestionError("Unable to load security settings."));
   }, []);
 
   const blockClipboard = (event: React.ClipboardEvent<HTMLInputElement>) => event.preventDefault();

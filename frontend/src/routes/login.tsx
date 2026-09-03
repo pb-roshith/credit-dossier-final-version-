@@ -43,11 +43,8 @@ function LoginPage() {
           result.security_questions.slice(0, 3).map((question) => ({ question, answer: "" })),
         );
       })
-      .catch((requestError) =>
-        setError(
-          requestError instanceof Error ? requestError.message : "Unable to load password policy.",
-        ),
-      );
+      // Security: do not expose backend error details to users.
+      .catch(() => setError("Unable to load password policy."));
   }, []);
 
   useEffect(() => {
