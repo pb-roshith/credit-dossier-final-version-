@@ -198,6 +198,11 @@ def login(
             detail="Invalid user ID or password.",
         )
     if not verify_password(credentials.password, user.password_hash):
+        if user.role == "admin":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user ID or password.",
+            )
         user.failed_login_attempts += 1
         if user.failed_login_attempts >= 3:
             user.is_locked = True
