@@ -1,0 +1,2 @@
+Mode: built-in image_gen
+Edit the supplied diagram with ONLY these three text changes: replace "Local File Storage" with "File Storage"; replace "Local Credit MCP :8001" with "Credit MCP :8001"; remove the entire line "Synthetic-data manufacturing" leaving clean background in its place. The word "Local" must not appear anywhere in the image. Preserve all other text, component boxes, colors, positioning, arrows, title, typography and dimensions exactly. Do not correct or redraw any connectors. Output a crisp landscape PNG.
