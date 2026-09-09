@@ -82,4 +82,14 @@ The Mistral path makes multiple detailed-generation calls, so a complete
 17-document run can take several minutes. Running the same company again
 refreshes older PDFs and all 16 PostgreSQL datasets.
 
-Test link (pqrs client ,ration analysis) - [dpaste.com/6E6QD7PTX](https://dpaste.com/6E6QD7PTX)
+Test link (pqrs client ,ration analysis) - [dpaste.com/6E6QD7PT](https://dpaste.com/6E6QD7PTX)
+
+DPAPI:
+
+cd backend
+
+python -m app.local_secrets .env backend `
+  MISTRAL_API_KEY DATABASE_URL INITIAL_ADMIN_PASSWORD PHOENIX_API_KEY
+
+python -m app.local_secrets ..\mcp\.env mcp `
+  MISTRAL_API_KEY POSTGRES_PASSWORD
