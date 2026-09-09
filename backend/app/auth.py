@@ -111,11 +111,11 @@ def seed_initial_users(db: Session) -> None:
         validate_password_strength(password, user_id)
         db.add(User(user_id=user_id, password_hash=hash_password(password), role=role))
         changed = True
-    changed = bool(
-        db.query(User).filter(User.role == "admin").update(
-            {User.role: "relationship_manager"}, synchronize_session=False
-        )
-    ) or changed
+    # changed = bool(
+    #     db.query(User).filter(User.role == "admin").update(
+    #         {User.role: "relationship_manager"}, synchronize_session=False
+    #     )
+    # ) or changed
     changed = bool(
         db.query(User).filter(User.role == "normal").update(
             {User.role: "credit_analyst"}, synchronize_session=False
