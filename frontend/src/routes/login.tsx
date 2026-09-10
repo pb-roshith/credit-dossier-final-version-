@@ -220,7 +220,7 @@ function LoginPage() {
             <label className="block space-y-1.5 text-sm font-medium">
               User ID
               <input
-                autoComplete="username"
+                autoComplete="off"
                 required
                 minLength={3}
                 maxLength={64}
@@ -235,7 +235,7 @@ function LoginPage() {
                 {mode === "reset" ? "New password" : "Password"}
                 <div className="relative">
                   <input
-                    autoComplete={mode === "login" ? "current-password" : "new-password"}
+                    autoComplete="off"
                     required
                     minLength={mode === "login" ? 1 : configuration?.password_policy.min_length}
                     maxLength={
@@ -271,7 +271,7 @@ function LoginPage() {
                 Confirm {mode === "reset" ? "new " : ""}password
                 <div className="relative">
                   <input
-                    autoComplete="new-password"
+                    autoComplete="off"
                     required
                     minLength={configuration?.password_policy.min_length}
                     maxLength={configuration?.password_policy.max_length ?? 1024}

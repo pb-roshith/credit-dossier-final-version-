@@ -162,6 +162,7 @@ function ProfilePage() {
               <div className="relative">
                 <input
                   type={visiblePasswords[label as string] ? "text" : "password"}
+                  autoComplete="off"
                   required
                   minLength={
                     label === "Current password" ? 1 : configuration?.password_policy.min_length
@@ -244,7 +245,7 @@ function ProfilePage() {
             <input
               required
               type="password"
-              autoComplete="current-password"
+              autoComplete="off"
               value={securityPassword}
               onChange={(event) => setSecurityPassword(event.target.value)}
               className="h-10 w-full rounded-md border border-input bg-background px-3 font-normal outline-none focus:ring-2 focus:ring-ring"
