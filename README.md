@@ -15,7 +15,7 @@ AI-assisted credit pitch-book workflow for relationship managers and credit anal
 - Deal submission/review with immutable submission snapshots and PDF download of the submitted state.
 - PDF, DOCX, and PPTX exports, plus theme extraction from a reference document.
 - Access to previously manufactured MCP company data for repeatable demos.
-- Mistral telemetry and optional Arize Phoenix/OpenTelemetry tracing, plus an in-app observability view.
+- Mistral telemetry plus an in-app observability view.
 
 ## Repository layout
 
@@ -42,7 +42,7 @@ The frontend uses the backend API and a single HTTP-only session cookie.
 | Data | PostgreSQL, with persisted logs isolated in the `audit` schema |
 | Integration | Model Context Protocol over local SSE |
 | Export | ReportLab/xhtml2pdf, python-docx, python-pptx |
-| Telemetry | Mistral telemetry and optional Arize Phoenix/OpenTelemetry |
+| Telemetry | Mistral telemetry |
 
 ## Local setup
 
@@ -176,7 +176,6 @@ The committed examples are [backend/.env.example](backend/.env.example) and [mcp
 | `MAX_GROUNDING_CHARS` | Limits assembled grounding context |
 | `GENERATION_SEMAPHORE` | Concurrent narrative generation limit |
 | `ORCHESTRATION_SEMAPHORE` | Concurrent orchestration limit |
-| `PHOENIX_API_KEY`, `PHOENIX_COLLECTOR_ENDPOINT` | Optional Phoenix trace export settings |
 
 By default, passwords must be at least 12 characters and contain uppercase, lowercase,
 numeric, and special characters; they may not contain the user ID. Never commit `.env` files.
@@ -188,7 +187,7 @@ are protected for the local machine by DPAPI in
 directory with:
 
 ```powershell
-python -m app.local_secrets .env backend MISTRAL_API_KEY DATABASE_URL INITIAL_ADMIN_PASSWORD PHOENIX_API_KEY
+python -m app.local_secrets .env backend MISTRAL_API_KEY DATABASE_URL INITIAL_ADMIN_PASSWORD
 python -m app.local_secrets ..\mcp\.env mcp MISTRAL_API_KEY POSTGRES_PASSWORD
 ```
 

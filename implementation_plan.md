@@ -21,7 +21,7 @@ Status labels:
 | Evidence/evaluation | Implemented | Citations/retrieved sources, claim classification, confidence score |
 | Narrative history | Implemented | Automatic/manual versions, mark final, compare, and delete |
 | Review snapshots | Implemented | Backend and frontend support frozen submitted-version PDF download |
-| Observability | Implemented | Mistral telemetry, optional Phoenix, stored metrics, observability UI |
+| Observability | Implemented | Mistral telemetry, stored metrics, observability UI |
 | Local MCP | Implemented | Owner-scoped companies, 16 tables, PDF tools, caching, circuit breaker |
 | Synthetic data | Implemented | Background/CLI manufacture of consistent 17-PDF and 16-table company packs |
 | Exports | Implemented | PDF, DOCX, PPTX, combined report, and theme extraction |
@@ -83,7 +83,7 @@ Single generation uses the same pipeline as batch generation. "Draft all" fetche
 - If the saved judge is missing or fails, the legacy evaluator score is used as a fallback.
 - Accuracy is skipped when the deal has no library documents.
 - Persisted `observability_details` contains stage status, model, latency, and token metrics where the upstream API exposes them.
-- Runtime spans are emitted to Mistral telemetry with redaction and optionally to Phoenix/OpenTelemetry.
+- Runtime spans are emitted to Mistral telemetry with redaction.
 
 ### 6. Versioning and approval logic
 
@@ -187,7 +187,7 @@ Acceptance criteria: the frontend has a single tested API contract.
 | Evidence | Citation normalization and retrieved-source tests | Open source panels and validate cited pages/files |
 | Versions | Narrative final/delete tests; frozen snapshot download tests | Submit, edit afterward, then download old version |
 | Exports | Parse/smoke-test PDF, DOCX, and PPTX outputs | Check tables, markdown, theme, and filenames |
-| Observability | Metrics serialization and trace setup tests | Inspect `/observability`, Mistral, and Phoenix traces |
+| Observability | Metrics serialization and trace setup tests | Inspect `/observability` and Mistral traces |
 | Frontend | `npm run build`, lint, targeted component/E2E tests | Exercise the application on port 8080 |
 
 Suggested local commands:
@@ -199,7 +199,7 @@ npm run lint
 
 ```
 
-Tests requiring Mistral, PostgreSQL, MCP, or Phoenix should clearly distinguish unit/mocked runs from live integration runs and must not rely on committed secrets.
+Tests requiring Mistral, PostgreSQL, or MCP should clearly distinguish unit/mocked runs from live integration runs and must not rely on committed secrets.
 
 ## Documentation maintenance rule
 

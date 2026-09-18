@@ -64,38 +64,6 @@ def setup_telemetry(client: "Mistral") -> None:
         logger.error(f"Failed to configure Mistral telemetry: {e}", exc_info=True)
 
 
-def init_phoenix_telemetry(project_name: str = "credit-dossier-api") -> None:
-    """
-    Initializes OpenTelemetry tracing globally for Arize Phoenix.
-    Automatically reads PHOENIX_API_KEY and PHOENIX_COLLECTOR_ENDPOINT from env.
-    Uses OpenInference to instrument the Mistral client and send LLM traces to Phoenix.
-    This runs alongside Mistral's native dedicated telemetry.
-    """
-    try:
-        from phoenix.otel import register
-        from openinference.instrumentation.mistralai import MistralAIInstrumentor
-
-        # 1. Register Phoenix as the global OpenTelemetry provider
-        tracer_provider = register(
-            project_name=project_name,
-            set_global_tracer_provider=True,
-            batch=False  # Good for local development/immediate visibility
-        )
-
-        # 2. Enable Auto-Instrumentation for LLM SDKs
-        MistralAIInstrumentor().instrument(tracer_provider=tracer_provider)
-        
-        logger.info(f"✓ Phoenix OpenInference telemetry configured (project={project_name})")
-
-    except ImportError as e:
-        logger.warning(
-            f"Phoenix instrumentation not available: {e}. "
-            f"Install with: pip install arize-phoenix-otel openinference-instrumentation-mistralai"
-        )
-    except Exception as e:
-        logger.error(f"Failed to configure Phoenix telemetry: {e}", exc_info=True)
-
-
 def get_tracer():
     """
     Return the OpenTelemetry tracer for manual span creation.

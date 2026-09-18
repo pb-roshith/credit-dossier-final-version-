@@ -89,7 +89,7 @@ DPAPI:
 cd backend
 
 python -m app.local_secrets .env backend `
-  MISTRAL_API_KEY DATABASE_URL INITIAL_ADMIN_PASSWORD PHOENIX_API_KEY
+  MISTRAL_API_KEY DATABASE_URL INITIAL_ADMIN_PASSWORD
 
 python -m app.local_secrets ..\mcp\.env mcp `
   MISTRAL_API_KEY POSTGRES_PASSWORD

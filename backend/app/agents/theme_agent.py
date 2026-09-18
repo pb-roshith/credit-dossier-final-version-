@@ -1,10 +1,9 @@
 import logging
 import io
-import json
 from typing import Optional
 from pydantic import BaseModel
 from colorthief import ColorThief
-import fitz  # PyMuPDF
+import pypdf
 
 logger = logging.getLogger(__name__)
 
@@ -18,30 +17,46 @@ def rgb_to_hex(rgb: tuple[int, int, int]) -> str:
 
 def extract_theme_from_document_bytes(file_bytes: bytes, filename: str) -> Optional[ThemeExtractionResponse]:
     """
-    Extracts visual colors directly from the uploaded document using PyMuPDF and ColorThief.
+    Extracts visual colors from an image or from images embedded on the first PDF page.
+
+    pypdf does not render PDF pages, so vector-only PDF artwork cannot be sampled.
     """
     try:
-        # If it's a PDF, render the first page to get corporate branding
+        image_streams: list[io.BytesIO] = []
+
         if filename.lower().endswith(".pdf"):
-            doc = fitz.open(stream=file_bytes, filetype="pdf")
-            if len(doc) == 0:
+            reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+            if not reader.pages:
                 return None
-                
-            page = doc.load_page(0)
-            pix = page.get_pixmap()
-            
-            # Save the pixmap to a memory buffer as PNG
-            img_bytes = pix.tobytes("png")
-            img_io = io.BytesIO(img_bytes)
+
+            # Process larger assets first because they are more likely to contain
+            # the page's dominant branding than small icons or decorative images.
+            embedded_images = sorted(
+                reader.pages[0].images,
+                key=lambda image: len(image.data),
+                reverse=True,
+            )
+            image_streams = [io.BytesIO(image.data) for image in embedded_images]
+            if not image_streams:
+                logger.warning("No embedded images found on the first PDF page")
+                return None
         else:
-            # Assume it's an image file directly
-            img_io = io.BytesIO(file_bytes)
-            
-        color_thief = ColorThief(img_io)
-        
-        # Build palette of 5 colors, ignoring pure white backgrounds
-        # get_palette returns a list of RGB tuples
-        palette_rgb = color_thief.get_palette(color_count=6, quality=1)
+            image_streams = [io.BytesIO(file_bytes)]
+
+        # Build a combined palette, keeping colors from larger PDF images first.
+        palette_rgb: list[tuple[int, int, int]] = []
+        for image_stream in image_streams:
+            try:
+                extracted = ColorThief(image_stream).get_palette(color_count=6, quality=1)
+            except (OSError, ValueError):
+                logger.debug("Skipping an embedded image that ColorThief cannot decode")
+                continue
+            for rgb in extracted:
+                if rgb not in palette_rgb:
+                    palette_rgb.append(rgb)
+
+        if not palette_rgb:
+            return None
         
         # Filter out near-white and near-black colors to find actual brand colors
         vibrant_colors = []

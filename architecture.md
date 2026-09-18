@@ -20,7 +20,7 @@ flowchart LR
     API --> AGENTS[Mistral Agents\n16 section + orchestration]
     API --> MOD[Mistral Moderation]
     API --> JUDGE[Mistral evaluator /\nObservability judge]
-    API --> OTEL[Mistral telemetry +\noptional Phoenix]
+    API --> OTEL[Mistral telemetry]
 
     AGENTS --> COMPANYLIB
     AGENTS --> DEAL_LIB
@@ -144,7 +144,7 @@ After generation, the backend stores:
 - a normalized confidence score from `MISTRAL_ACCURACY_JUDGE_ID`, when configured, with the legacy evaluator score as fallback;
 - per-stage observability metrics for moderation, orchestration, section generation, claim evaluation, and confidence judging.
 
-Mistral telemetry uses redaction. Phoenix/OpenInference instrumentation can export the same runtime to a configured Phoenix collector. The `/observability` frontend route also derives trace and agent summaries from the persisted section details and can export them as JSON.
+Mistral telemetry uses redaction. The `/observability` frontend route also derives trace and agent summaries from the persisted section details and can export them as JSON.
 
 ## Review and export lifecycle
 
@@ -169,7 +169,7 @@ Current exports render the accessible deal as PDF, DOCX, or PPTX. A separate com
 
 Backend startup performs the following operations:
 
-1. Initializes Mistral and optional Phoenix telemetry.
+1. Initializes Mistral telemetry when the shared client is created.
 2. Creates missing ORM tables and applies safe additive column migrations.
 3. Seeds configured initial role accounts and backfills legacy deal owners.
 4. Resets interrupted library-sync records.
