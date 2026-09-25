@@ -27,6 +27,7 @@ from app.auth import (
 from app.config import settings
 from app.database import get_db
 from app.local_secrets import rotate_if_due
+from app.secret_provider import is_production
 from app.models.user import AuditLog, AuthSession, SecurityAnswer, User
 from app.schemas.input_validation import StrictInputModel
 
@@ -224,7 +225,7 @@ def login(
     user.failed_login_attempts = 0
     user.locked_at = None
     db.commit()
-    if user.role == "admin":
+    if user.role == "admin" and not is_production(settings.APP_ENV):
         try:
             rotation = rotate_if_due()
             if rotation["rotated"]:

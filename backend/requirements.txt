@@ -17,6 +17,10 @@ pydantic-settings==2.14.2
 # Security-sensitive dependency used by PDF signing/validation packages
 cryptography==50.0.0
 
+# Production secret provider (managed identity via DefaultAzureCredential)
+azure-identity==1.25.3
+azure-keyvault-secrets==4.10.0
+
 # File uploads
 python-multipart==0.0.32
 aiofiles==25.1.0

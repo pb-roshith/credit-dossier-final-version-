@@ -24,6 +24,9 @@ from app.config import settings
 from app.models.deal import Deal
 from app.models.mistral_agent import MistralAgent
 from app.models.library_file import LibraryFile
+from app.prompt_canary import PromptCanary, enforce_canary
+from app.response_entropy import enforce_response_entropy
+from app.response_language import enforce_expected_language
 from app.agents.instructions import get_instructions
 from app.telemetry import (
     extract_usage_metrics,
@@ -765,6 +768,7 @@ class MistralLibraryService:
         """
         client = _get_client()
         tracer = get_tracer()
+        prompt_canary = PromptCanary.create()
 
         # Build the user message
         prompt_span_ctx = None
@@ -848,6 +852,7 @@ class MistralLibraryService:
             "output retrieval IDs, chunk IDs, file IDs, or plural source groups. "
             "Do not add a References or Sources section at the bottom."
         )
+        user_parts.append(prompt_canary.instruction)
 
         messages = [
             {"role": "user", "content": "\n".join(user_parts)},
@@ -911,6 +916,19 @@ class MistralLibraryService:
             accumulate_usage(response)
 
             content = conversation_output_content(response)
+            enforce_canary(
+                content,
+                prompt_canary,
+                context=f"section_generation:{section_title}",
+            )
+            enforce_response_entropy(
+                content,
+                context=f"section_generation:{section_title}",
+            )
+            enforce_expected_language(
+                content,
+                context=f"section_generation:{section_title}",
+            )
 
             if not content:
                 # Retry once with slightly different prompt
@@ -928,6 +946,19 @@ class MistralLibraryService:
                 )
                 accumulate_usage(response)
                 content = conversation_output_content(response)
+                enforce_canary(
+                    content,
+                    prompt_canary,
+                    context=f"section_generation_retry:{section_title}",
+                )
+                enforce_response_entropy(
+                    content,
+                    context=f"section_generation_retry:{section_title}",
+                )
+                enforce_expected_language(
+                    content,
+                    context=f"section_generation_retry:{section_title}",
+                )
 
             if not content:
                 if tracer and span_ctx:
@@ -964,6 +995,19 @@ class MistralLibraryService:
                 )
                 accumulate_usage(retry_response)
                 retry_content = conversation_output_content(retry_response)
+                enforce_canary(
+                    retry_content,
+                    prompt_canary,
+                    context=f"section_generation_artifact_retry:{section_title}",
+                )
+                enforce_response_entropy(
+                    retry_content,
+                    context=f"section_generation_artifact_retry:{section_title}",
+                )
+                enforce_expected_language(
+                    retry_content,
+                    context=f"section_generation_artifact_retry:{section_title}",
+                )
                 if retry_content:
                     cleaned_retry, retry_leaked_search = clean_generation_artifacts(retry_content)
                     if retry_leaked_search:
@@ -1163,6 +1207,8 @@ class MistralLibraryService:
             "- 50-69: Mixed — significant inferences or some unsupported claims\n"
             "- Below 50: Many generic or potentially fabricated claims"
         )
+        prompt_canary = PromptCanary.create()
+        evaluator_prompt += prompt_canary.instruction
 
         # Truncate content for evaluation
         max_chars = 8_000
@@ -1208,6 +1254,19 @@ class MistralLibraryService:
             )
 
             raw = response.choices[0].message.content or ""
+            enforce_canary(
+                raw,
+                prompt_canary,
+                context=f"accuracy_evaluation:{section_title}",
+            )
+            enforce_response_entropy(
+                raw,
+                context=f"accuracy_evaluation:{section_title}",
+            )
+            enforce_expected_language(
+                raw,
+                context=f"accuracy_evaluation:{section_title}",
+            )
             raw = raw.strip()
 
             # Strip markdown code fences if present

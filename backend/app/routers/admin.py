@@ -7,8 +7,10 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.auth import hash_password, password_policy, require_admin, validate_password_strength
+from app.config import settings
 from app.database import get_db
 from app.local_secrets import rotation_status
+from app.secret_provider import is_production
 from app.models.user import AuditLog, AuthSession, PasswordPolicyConfiguration, User
 from app.schemas.input_validation import StrictInputModel
 
@@ -107,6 +109,11 @@ def _sanitized_audit_response(event: AuditLog) -> AuditLogResponse:
 def encryption_key_status(request: Request):
     """Return non-secret local key metadata for administrator oversight."""
     request.state.audit_resource_id = "local-secret-key"
+    if is_production(settings.APP_ENV):
+        raise HTTPException(
+            status_code=409,
+            detail="Production secrets are managed and rotated in Azure Key Vault.",
+        )
     return rotation_status()
 
 

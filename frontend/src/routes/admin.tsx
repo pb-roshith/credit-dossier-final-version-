@@ -385,12 +385,18 @@ function AdminDashboard() {
                       <td>
                         <span
                           className={`inline-flex whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium ${
-                            event.category === "system_error"
+                            event.category === "security_alert"
+                              ? "border-amber-300 bg-amber-50 text-amber-800"
+                              : event.category === "system_error"
                               ? "border-red-300 bg-red-50 text-red-700"
                               : "border-blue-300 bg-blue-50 text-blue-700"
                           }`}
                         >
-                          {event.category === "system_error" ? "System error" : "User event"}
+                          {event.category === "security_alert"
+                            ? "Security alert"
+                            : event.category === "system_error"
+                              ? "System error"
+                              : "User event"}
                         </span>
                       </td>
                       <td className="max-w-48 truncate font-mono text-xs" title={event.event_id}>

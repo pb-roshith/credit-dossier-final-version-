@@ -27,6 +27,9 @@ from app.telemetry import (
     set_gen_ai_attributes,
     set_span_attributes,
 )
+from app.prompt_canary import PromptCanary, enforce_canary
+from app.response_entropy import enforce_response_entropy
+from app.response_language import enforce_expected_language
 
 logger = logging.getLogger(__name__)
 
@@ -286,6 +289,8 @@ class OrchestrationService:
             deal_context=deal_context,
             document_summaries=document_summaries,
         )
+        prompt_canary = PromptCanary.create()
+        user_prompt += prompt_canary.instruction
 
         # Call orchestration agent
         try:
@@ -328,6 +333,20 @@ class OrchestrationService:
                     else:
                         parts.append(str(part))
                 content = "\n".join(parts)
+
+            enforce_canary(
+                content,
+                prompt_canary,
+                context=f"orchestration:{section.section_key}",
+            )
+            enforce_response_entropy(
+                content,
+                context=f"orchestration:{section.section_key}",
+            )
+            enforce_expected_language(
+                content,
+                context=f"orchestration:{section.section_key}",
+            )
 
             # Parse JSON response
             result = OrchestrationService._parse_orchestration_response(content)

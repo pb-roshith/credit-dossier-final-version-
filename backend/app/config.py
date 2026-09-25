@@ -7,11 +7,12 @@ from pathlib import Path
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.local_secrets import load_into_environment
+from app.secret_provider import load_runtime_secrets
 
 
-# Encrypted local values override plaintext environment/configuration values.
-load_into_environment("backend", overwrite=True)
+# Local development uses DPAPI/AES-GCM. Production fails closed unless required
+# secrets are available from Azure Key Vault.
+load_runtime_secrets("backend")
 
 
 class Settings(BaseSettings):
@@ -58,6 +59,7 @@ class Settings(BaseSettings):
 
     # ── Production ─────────────────────────────────────────────
     ENABLE_TIMING_METRICS: bool = True
+    AZURE_KEY_VAULT_URL: str = ""
     # Trust X-Forwarded-For only when a trusted reverse proxy overwrites it.
     AUDIT_TRUST_X_FORWARDED_FOR: bool = False
 

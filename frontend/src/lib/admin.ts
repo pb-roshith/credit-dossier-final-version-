@@ -3,7 +3,7 @@ import { apiErrorFromResponse } from "@/lib/api-error";
 
 export type AuditLogEntry = {
   event_id: string;
-  category: "user_event" | "administrative_action" | "system_error";
+  category: "user_event" | "administrative_action" | "system_error" | "security_alert";
   event_type: string;
   user_id: string;
   source_ip: string;

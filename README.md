@@ -16,6 +16,9 @@ AI-assisted credit pitch-book workflow for relationship managers and credit anal
 - PDF, DOCX, and PPTX exports, plus theme extraction from a reference document.
 - Access to previously manufactured MCP company data for repeatable demos.
 - Mistral telemetry plus an in-app observability view.
+- Per-request prompt canaries that block and audit LLM completions containing protected prompt markers.
+- High-entropy and encoded-segment checks that quarantine suspicious LLM completions for security review.
+- Expected-language checks that block and audit sustained non-English LLM output patterns.
 
 ## Repository layout
 
@@ -167,6 +170,7 @@ The committed examples are [backend/.env.example](backend/.env.example) and [mcp
 | `MISTRAL_ACCURACY_JUDGE_ID` | Optional saved Observability judge used for confidence |
 | `MISTRAL_ACCURACY_JUDGE_MAX_SCORE` | Maximum raw judge score; normalized to 0-100 |
 | `DATABASE_URL` | Backend SQLAlchemy database URL |
+| `AZURE_KEY_VAULT_URL` | Required in production; vault containing provider and infrastructure secrets |
 | `MCP_SSE_URL` | Local MCP endpoint, normally `http://127.0.0.1:8001/sse` |
 | `INITIAL_RELATIONSHIP_MANAGER_*` | Optional initial RM credentials |
 | `INITIAL_CREDIT_ANALYST_*` | Optional initial analyst credentials |
@@ -199,6 +203,30 @@ are recorded in the administrator audit log. Back up both protected files togeth
 DPAPI binds the keyring to this Windows host, so copying it to another host does not make
 it decryptable. Windows ACLs on `backend/.data` must allow only the application service
 identity and authorized administrators to read these files.
+
+### Production secrets with Azure Key Vault
+
+Production does not use the local DPAPI store. Set `APP_ENV=production` and
+`AZURE_KEY_VAULT_URL=https://<vault-name>.vault.azure.net/` as deployment
+environment variables, enable a managed identity for both the backend and MCP
+workloads, and grant that identity permission to read secrets. Do not put the
+Mistral key or database credentials in the production `.env` file.
+
+The backend loads `mistral-api-key` and `database-url`; the MCP loads
+`mistral-api-key` and `mcp-postgres-password`. Optional backend secrets are
+`report-tokenization-key`, `initial-relationship-manager-password`,
+`initial-credit-analyst-password`, and `initial-admin-password`. A different
+vault name can be selected with an environment variable such as
+`AZURE_KEY_VAULT_MISTRAL_API_KEY_SECRET_NAME`. Startup fails if Key Vault is
+unavailable or a required secret is missing, and never falls back to DPAPI or
+plaintext production credentials.
+
+Rotate the provider credential by creating a new Mistral API key, saving it as
+a new enabled version of `mistral-api-key`, restarting or rolling the workloads,
+verifying an LLM request, and then revoking the old provider key. Keep the old
+key active only for the overlap needed to validate the rollout. Azure Key Vault
+retains secret-version history; the operational change record should capture
+the owner, date, verification result, revocation, and next review date.
 
 The password policy and recovery-question bank are configurable in `backend/.env` using
 `PASSWORD_MIN_LENGTH`, `PASSWORD_MAX_LENGTH`, `PASSWORD_MIN_UPPERCASE`,

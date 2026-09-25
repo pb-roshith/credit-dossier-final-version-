@@ -17,9 +17,9 @@ load_dotenv(MCP_DIR / ".env", override=True)
 BACKEND_DIR = MCP_DIR.parent / "backend"
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
-from app.local_secrets import load_into_environment  # noqa: E402
+from app.secret_provider import load_runtime_secrets  # noqa: E402
 
-load_into_environment("mcp", overwrite=True)
+load_runtime_secrets("mcp")
 
 
 @dataclass(frozen=True)
