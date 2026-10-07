@@ -30,6 +30,7 @@ function NewDeal() {
   const { user } = useAuth();
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
   const [form, setForm] = useState({
     customer: "", customerType: "Existing" as DealType, industry: "", segment: "",
     geography: "", kyc: "verified" as "verified" | "pending",
@@ -78,6 +79,35 @@ function NewDeal() {
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!form.customer.trim() || submitting) return;
+    setSubmitError("");
+    const textFields = [
+      ["Legal name", form.customer, 256], ["Customer type", form.customerType, 32],
+      ["Industry", form.industry, 128], ["Segment", form.segment, 64],
+      ["Facility", form.facility, 64], ["Pricing", form.pricing, 128],
+      ["Repayment", form.repayment, 128],
+    ] as const;
+    for (const [label, value, maxLength] of textFields) {
+      if (value.length > maxLength || !/^[\p{L}\p{M}\p{N} .,'’"()\-/&+:%=$€£₹#@!?;\[\]]*$/u.test(value)) {
+        setSubmitError(`${label} must contain plain text without markup or control characters, up to ${maxLength} characters.`);
+        return;
+      }
+    }
+    if (!/^[A-Z]{3,8}$/.test(form.currency) || !["pending", "verified"].includes(form.kyc)) {
+      setSubmitError("Select a valid currency and KYC status.");
+      return;
+    }
+    if (!Number.isFinite(form.amount) || form.amount < 0 || !Number.isInteger(form.tenure) || form.tenure < 1 || form.tenure > 1200) {
+      setSubmitError("Enter a non-negative amount and a tenure between 1 and 1200 months.");
+      return;
+    }
+    if (form.due && (!/^\d{4}-\d{2}-\d{2}$/.test(form.due) || !Number.isFinite(Date.parse(form.due)) || new Date(form.due).toISOString().slice(0, 10) !== form.due)) {
+      setSubmitError("Enter a valid target completion date.");
+      return;
+    }
+    if (form.geography.length > 128 || !/^[\p{L}\p{M}\p{N} .,'’()\-/&]*$/u.test(form.geography.trim())) {
+      setSubmitError("Enter a valid Geography location name without markup or control characters.");
+      return;
+    }
     setSubmitting(true);
     try {
       const deal = await api.deals.create({
@@ -85,7 +115,7 @@ function NewDeal() {
         customer_type: form.customerType,
         industry: form.industry,
         segment: form.segment,
-        geography: form.geography,
+        geography: form.geography.trim(),
         kyc: form.kyc,
         facility: form.facility,
         currency: form.currency,
@@ -99,6 +129,7 @@ function NewDeal() {
       router.navigate({ to: "/deals/$dealId", params: { dealId: deal.id } });
     } catch (err) {
       console.error("Failed to create deal:", err);
+      setSubmitError("Unable to create the deal. Check your entries and try again.");
       setSubmitting(false);
     }
   }
@@ -111,6 +142,7 @@ function NewDeal() {
         </Link>
       </div>
       <form onSubmit={submit} className="mx-auto max-w-3xl">
+        {submitError && <p role="alert" className="mb-4 text-sm text-destructive">{submitError}</p>}
         <div className="doc-card mb-4">
           <div className="doc-section-header"><FilePlus2 className="h-4 w-4 shrink-0" /><span>Customer Details</span></div>
           <div className="grid gap-4 p-5 sm:grid-cols-2">
@@ -123,13 +155,13 @@ function NewDeal() {
                 <option value="New-to-bank">New-to-bank</option>
               </select>
             </Field>
-            <Field label="Industry"><input className={inputCls} value={form.industry} onChange={e => set("industry", e.target.value)} /></Field>
+            <Field label="Industry"><input maxLength={128} className={inputCls} value={form.industry} onChange={e => set("industry", e.target.value)} /></Field>
             <Field label="Segment">
               <select className={selectCls} value={form.segment} onChange={e => set("segment", e.target.value)}>
                 <option>SME</option><option>Mid Corporate</option><option>Large Corporate</option>
               </select>
             </Field>
-            <Field label="Geography"><input className={inputCls} value={form.geography} onChange={e => set("geography", e.target.value)} /></Field>
+            <Field label="Geography"><input aria-label="Geography" maxLength={128} className={inputCls} value={form.geography} onChange={e => set("geography", e.target.value)} /></Field>
             <Field label="KYC status">
               <select className={selectCls} value={form.kyc} onChange={e => set("kyc", e.target.value as "verified" | "pending")}>
                 <option value="verified">Verified</option><option value="pending">Pending</option>
@@ -151,8 +183,8 @@ function NewDeal() {
             </Field>
             <Field label="Amount (in units of currency)"><input type="number" min={0} className={inputCls} value={form.amount} onChange={e => set("amount", Number(e.target.value))} /></Field>
             <Field label="Tenure (months)"><input type="number" min={1} className={inputCls} value={form.tenure} onChange={e => set("tenure", Number(e.target.value))} /></Field>
-            <Field label="Pricing"><input className={inputCls} value={form.pricing} onChange={e => set("pricing", e.target.value)} /></Field>
-            <Field label="Repayment"><input className={inputCls} value={form.repayment} onChange={e => set("repayment", e.target.value)} /></Field>
+            <Field label="Pricing"><input maxLength={128} className={inputCls} value={form.pricing} onChange={e => set("pricing", e.target.value)} /></Field>
+            <Field label="Repayment"><input maxLength={128} className={inputCls} value={form.repayment} onChange={e => set("repayment", e.target.value)} /></Field>
             <Field label="Collateral required">
               <select className={selectCls} value={String(form.collateral)} onChange={e => set("collateral", e.target.value === "true")}>
                 <option value="true">Yes</option><option value="false">No (Clean)</option>

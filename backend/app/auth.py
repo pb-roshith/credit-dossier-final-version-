@@ -32,8 +32,8 @@ def session_timeout_minutes(role: str) -> int:
 
 def default_password_policy() -> dict[str, int]:
     return {
-        "min_length": settings.PASSWORD_MIN_LENGTH,
-        "max_length": settings.PASSWORD_MAX_LENGTH,
+        "min_length": max(12, min(settings.PASSWORD_MIN_LENGTH, 31)),
+        "max_length": max(12, min(settings.PASSWORD_MAX_LENGTH, 31)),
         "min_uppercase": settings.PASSWORD_MIN_UPPERCASE,
         "min_lowercase": settings.PASSWORD_MIN_LOWERCASE,
         "min_digits": settings.PASSWORD_MIN_DIGITS,
@@ -46,8 +46,8 @@ def password_policy(db: Session | None = None) -> dict[str, int]:
         configured = db.get(PasswordPolicyConfiguration, 1)
         if configured:
             return {
-                "min_length": configured.min_length,
-                "max_length": configured.max_length,
+                "min_length": max(12, min(configured.min_length, 31)),
+                "max_length": max(12, min(configured.max_length, 31)),
                 "min_uppercase": configured.min_uppercase,
                 "min_lowercase": configured.min_lowercase,
                 "min_digits": configured.min_digits,

@@ -73,6 +73,10 @@ function LoginPage() {
     event.preventDefault();
     setError(null);
     setSuccess(null);
+    if (userId.length > 31 || password.length > 31 || confirmPassword.length > 31) {
+      setError("User ID and password must not exceed 31 characters.");
+      return;
+    }
     if (mode === "reset" && !resetQuestionsLoaded) {
       setSubmitting(true);
       try {
@@ -223,7 +227,7 @@ function LoginPage() {
                 autoComplete="off"
                 required
                 minLength={3}
-                maxLength={64}
+                maxLength={31}
                 value={userId}
                 onChange={(event) => setUserId(event.target.value)}
                 className="h-11 w-full rounded-md border border-input bg-background px-3 font-normal outline-none focus:ring-2 focus:ring-ring"
@@ -239,7 +243,7 @@ function LoginPage() {
                     required
                     minLength={mode === "login" ? 1 : configuration?.password_policy.min_length}
                     maxLength={
-                      mode === "login" ? 1024 : (configuration?.password_policy.max_length ?? 1024)
+                      mode === "login" ? 31 : Math.min(31, configuration?.password_policy.max_length ?? 31)
                     }
                     type={showPassword ? "text" : "password"}
                     value={password}
@@ -274,7 +278,7 @@ function LoginPage() {
                     autoComplete="off"
                     required
                     minLength={configuration?.password_policy.min_length}
-                    maxLength={configuration?.password_policy.max_length ?? 1024}
+                    maxLength={Math.min(31, configuration?.password_policy.max_length ?? 31)}
                     type={showConfirmPassword ? "text" : "password"}
                     value={confirmPassword}
                     onChange={(event) => setConfirmPassword(event.target.value)}

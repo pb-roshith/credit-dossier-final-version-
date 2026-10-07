@@ -38,8 +38,8 @@ USER_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 class Credentials(StrictInputModel):
-    user_id: str = Field(min_length=3, max_length=64)
-    password: str = Field(min_length=1, max_length=1024)
+    user_id: str = Field(min_length=3, max_length=31)
+    password: str = Field(min_length=1, max_length=31)
 
     @field_validator("user_id")
     @classmethod
@@ -61,7 +61,7 @@ class SecurityQuestionResponse(StrictInputModel):
 
 
 class RegisterRequest(Credentials):
-    confirm_password: str = Field(min_length=1, max_length=1024)
+    confirm_password: str = Field(min_length=1, max_length=31)
     role: str
     security_questions: list[SecurityQuestionResponse] = Field(min_length=3, max_length=3)
 
@@ -74,13 +74,13 @@ class RegisterRequest(Credentials):
 
 
 class ChangePasswordRequest(StrictInputModel):
-    current_password: str = Field(min_length=1, max_length=1024)
-    new_password: str = Field(min_length=1, max_length=1024)
-    confirm_password: str = Field(min_length=1, max_length=1024)
+    current_password: str = Field(min_length=1, max_length=31)
+    new_password: str = Field(min_length=1, max_length=31)
+    confirm_password: str = Field(min_length=1, max_length=31)
 
 
 class UserIdRequest(StrictInputModel):
-    user_id: str = Field(min_length=3, max_length=64)
+    user_id: str = Field(min_length=3, max_length=31)
 
     @field_validator("user_id")
     @classmethod
@@ -93,12 +93,12 @@ class UserIdRequest(StrictInputModel):
 
 class ResetPasswordRequest(UserIdRequest):
     security_questions: list[SecurityQuestionResponse] = Field(min_length=3, max_length=3)
-    new_password: str = Field(min_length=1, max_length=1024)
-    confirm_password: str = Field(min_length=1, max_length=1024)
+    new_password: str = Field(min_length=1, max_length=31)
+    confirm_password: str = Field(min_length=1, max_length=31)
 
 
 class ConfigureSecurityQuestionsRequest(StrictInputModel):
-    current_password: str = Field(min_length=1, max_length=1024)
+    current_password: str = Field(min_length=1, max_length=31)
     security_questions: list[SecurityQuestionResponse] = Field(min_length=3, max_length=3)
 
 

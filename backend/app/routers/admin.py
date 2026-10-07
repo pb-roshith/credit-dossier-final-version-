@@ -23,8 +23,8 @@ router = APIRouter(
 
 
 class PasswordPolicyRequest(StrictInputModel):
-    min_length: int = Field(ge=1, le=1024)
-    max_length: int = Field(ge=1, le=1024)
+    min_length: int = Field(ge=12, le=31)
+    max_length: int = Field(ge=12, le=31)
     min_uppercase: int = Field(ge=0, le=1024)
     min_lowercase: int = Field(ge=0, le=1024)
     min_digits: int = Field(ge=0, le=1024)
@@ -81,8 +81,8 @@ class LockedUserResponse(BaseModel):
 
 
 class AdminResetPasswordRequest(StrictInputModel):
-    new_password: str = Field(min_length=1, max_length=1024)
-    confirm_password: str = Field(min_length=1, max_length=1024)
+    new_password: str = Field(min_length=1, max_length=31)
+    confirm_password: str = Field(min_length=1, max_length=31)
 
 
 class EncryptionKeyStatusResponse(BaseModel):

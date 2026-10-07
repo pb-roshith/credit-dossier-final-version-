@@ -3,12 +3,13 @@ Pydantic schemas for Deal, Section, AuditEntry, and Version.
 """
 
 import json
-from datetime import datetime
+import unicodedata
+from datetime import date, datetime
 from typing import Optional
 from urllib.parse import urlsplit
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
-from app.schemas.input_validation import StrictInputModel
+from app.schemas.input_validation import StrictInputModel, validate_markdown_text
 
 
 def _sanitize_failure_metadata(value):
@@ -157,6 +158,11 @@ class SectionUpdate(StrictInputModel):
     state: Optional[str] = Field(default=None, pattern=r"^(pending|ready)$")
     source_urls: Optional[list[str]] = None
 
+    @field_validator("sources", "expected_output", "custom_instructions", "output_template", "generated_content")
+    @classmethod
+    def validate_section_text(cls, value):
+        return validate_markdown_text(value)
+
     @field_validator("source_urls")
     @classmethod
     def validate_source_urls(cls, value):
@@ -166,12 +172,20 @@ class SectionUpdate(StrictInputModel):
             raise ValueError("A section can contain at most 10 URLs.")
         normalized: list[str] = []
         for raw_url in value:
+            if any(char.isspace() or ord(char) < 32 or char in '<>"\'\\' for char in raw_url):
+                raise ValueError("URLs must not contain whitespace, markup, or control characters.")
             url = raw_url.strip()
             parsed = urlsplit(url)
             if parsed.scheme not in {"http", "https"} or not parsed.hostname:
                 raise ValueError(f"Invalid HTTP/HTTPS URL: {raw_url}")
             if len(url) > 2048:
                 raise ValueError("A URL cannot exceed 2048 characters.")
+            if parsed.username is not None or parsed.password is not None:
+                raise ValueError("URLs must not contain credentials.")
+            try:
+                parsed.port
+            except ValueError as exc:
+                raise ValueError("URL port is invalid.") from exc
             if url not in normalized:
                 normalized.append(url)
         return normalized
@@ -192,9 +206,19 @@ class AuditEntryResponse(BaseModel):
 class VersionCreate(StrictInputModel):
     notes: str = Field(default="", max_length=4000)
 
+    @field_validator("notes")
+    @classmethod
+    def validate_notes(cls, value):
+        return validate_markdown_text(value)
+
 
 class VersionReviewRequest(StrictInputModel):
     comments: str = Field(default="", max_length=4000)
+
+    @field_validator("comments")
+    @classmethod
+    def validate_comments(cls, value):
+        return validate_markdown_text(value)
 
 
 class VersionResponse(BaseModel):
@@ -230,7 +254,66 @@ class NarrativeEditLockResponse(BaseModel):
 
 
 # ── Deal ────────────────────────────────────────────────────────
-class DealCreate(StrictInputModel):
+class DealInput(StrictInputModel):
+    @field_validator("customer", "customer_type", "industry", "segment", "facility",
+                     "pricing", "repayment", "status", check_fields=False)
+    @classmethod
+    def validate_plain_text(cls, value: Optional[str], info: ValidationInfo) -> Optional[str]:
+        if value is None:
+            return value
+        if any(
+            unicodedata.category(char)[0] not in {"L", "M", "N"}
+            and char not in " .,'’\"()-/&+:%=$€£₹#@!?;[]"
+            for char in value
+        ):
+            raise ValueError(f"{info.field_name} must contain plain text, without markup or control characters.")
+        value = value.strip()
+        if info.field_name == "customer" and not value:
+            raise ValueError("Customer name must not be blank.")
+        return value
+
+    @field_validator("due", check_fields=False)
+    @classmethod
+    def validate_due(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or value == "":
+            return value
+        if len(value) != 10 or date.fromisoformat(value).isoformat() != value:
+            raise ValueError("Target completion date must use YYYY-MM-DD.")
+        return value
+
+    @field_validator("theme_palette", check_fields=False)
+    @classmethod
+    def validate_palette(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        import re
+        try:
+            colors = json.loads(value)
+        except ValueError as exc:
+            raise ValueError("Theme palette must be a JSON array of hex colors.") from exc
+        if not isinstance(colors, list) or not colors or any(
+            not isinstance(color, str) or not re.fullmatch(r"#[0-9A-Fa-f]{6}", color)
+            for color in colors
+        ):
+            raise ValueError("Theme palette must be a JSON array of hex colors.")
+        return value
+
+    @field_validator("geography", check_fields=False)
+    @classmethod
+    def validate_geography(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        value = value.strip()
+        if any(
+            unicodedata.category(char)[0] not in {"L", "M", "N"}
+            and char not in " .,'’()-/&"
+            for char in value
+        ):
+            raise ValueError("Geography must contain a location name, without markup or control characters.")
+        return value
+
+
+class DealCreate(DealInput):
     customer: str = Field(..., min_length=1, max_length=256)
     customer_type: str = Field(default="Existing", max_length=32)
     industry: str = Field(default="", max_length=128)
@@ -239,7 +322,7 @@ class DealCreate(StrictInputModel):
     kyc: str = Field(default="pending", pattern=r"^(pending|verified)$")
     facility: str = Field(default="Term Loan", max_length=64)
     currency: str = Field(default="INR", min_length=3, max_length=8, pattern=r"^[A-Z]+$")
-    amount: float = Field(default=0, ge=0)
+    amount: float = Field(default=0, ge=0, allow_inf_nan=False)
     tenure: int = Field(default=60, ge=0, le=1200)
     pricing: str = Field(default="", max_length=128)
     repayment: str = Field(default="", max_length=128)
@@ -253,7 +336,7 @@ class DealSearchRequest(StrictInputModel):
     search: Optional[str] = Field(default=None, max_length=256)
 
 
-class DealUpdate(StrictInputModel):
+class DealUpdate(DealInput):
     customer: Optional[str] = Field(default=None, min_length=1, max_length=256)
     customer_type: Optional[str] = Field(default=None, max_length=32)
     industry: Optional[str] = Field(default=None, max_length=128)
@@ -262,7 +345,7 @@ class DealUpdate(StrictInputModel):
     kyc: Optional[str] = Field(default=None, pattern=r"^(pending|verified)$")
     facility: Optional[str] = Field(default=None, max_length=64)
     currency: Optional[str] = Field(default=None, min_length=3, max_length=8, pattern=r"^[A-Z]+$")
-    amount: Optional[float] = Field(default=None, ge=0)
+    amount: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
     tenure: Optional[int] = Field(default=None, ge=0, le=1200)
     pricing: Optional[str] = Field(default=None, max_length=128)
     repayment: Optional[str] = Field(default=None, max_length=128)

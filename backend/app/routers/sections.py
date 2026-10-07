@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
+from pydantic import ValidationError
 
 from app.config import settings
 from app.database import SessionLocal, get_db
@@ -536,6 +537,12 @@ async def upload_template(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     ext = Path(filename).suffix.lower()
 
+    template_text = extract_text_preview(file_bytes, filename)
+    try:
+        SectionUpdate(output_template=template_text)
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail="Template must contain plain text or Markdown without HTML markup, within 100000 characters.") from exc
+
     # Save template file to disk
     template_dir = settings.upload_path / deal_id / "templates"
     template_dir.mkdir(parents=True, exist_ok=True)
@@ -546,7 +553,6 @@ async def upload_template(
         f.write(file_bytes)
 
     # Extract text content from the template file
-    template_text = extract_text_preview(file_bytes, filename)
 
     # Update section with template
     section.output_template = template_text

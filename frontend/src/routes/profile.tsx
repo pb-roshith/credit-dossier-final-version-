@@ -169,8 +169,8 @@ function ProfilePage() {
                   }
                   maxLength={
                     label === "Current password"
-                      ? 1024
-                      : (configuration?.password_policy.max_length ?? 1024)
+                      ? 31
+                      : Math.min(31, configuration?.password_policy.max_length ?? 31)
                   }
                   value={value as string}
                   onChange={(event) =>

@@ -31,14 +31,14 @@ const POLICY_FIELDS: Array<{
   {
     key: "min_length",
     label: "Minimum password length",
-    description: "Smallest number of characters accepted for a new password.",
-    minimum: 1,
+    description: "Choose at least 12 characters, up to the configured maximum.",
+    minimum: 12,
   },
   {
     key: "max_length",
     label: "Maximum password length",
-    description: "Largest number of characters accepted for a new password.",
-    minimum: 1,
+    description: "Choose at most 31 characters, at or above the configured minimum.",
+    minimum: 12,
   },
   {
     key: "min_uppercase",
@@ -158,6 +158,11 @@ function AdminDashboard() {
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!policy) return;
+    if (!Number.isInteger(policy.min_length) || !Number.isInteger(policy.max_length) ||
+        policy.min_length < 12 || policy.max_length > 31 || policy.min_length > policy.max_length) {
+      setError("Password lengths must satisfy 12 ≤ minimum ≤ maximum ≤ 31.");
+      return;
+    }
     setSaving(true);
     setError(null);
     setMessage(null);
@@ -292,7 +297,7 @@ function AdminDashboard() {
                   required
                   type="number"
                   min={field.minimum}
-                  max={1024}
+                  max={31}
                   step={1}
                   value={policy[field.key]}
                   onChange={(event) =>

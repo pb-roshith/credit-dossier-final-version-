@@ -46,6 +46,13 @@ import {
 import { diffWords } from "diff";
 import { useAuth } from "@/lib/auth";
 import { apiErrorFromResponse } from "@/lib/api-error";
+import { textInputError, sourceUrlError } from "@/lib/input-validation";
+
+function validateTextInput(label: string, value: string, maxLength: number): boolean {
+  const error = textInputError(label, value, maxLength);
+  if (error) alert(error);
+  return !error;
+}
 
 export const Route = createFileRoute("/deals/$dealId")({
   head: () => ({ meta: [{ title: "Deal — Credit Pitch Book" }] }),
@@ -431,6 +438,8 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
 
   const handleSaveSectionDetails = async () => {
     if (!active || savingSectionDetails) return;
+    if (!validateTextInput("Data sources", dataSources, 20_000) ||
+        !validateTextInput("Expected output", expected, 20_000)) return;
     setSavingSectionDetails(true);
     try {
       await api.sections.update(deal.id, active.id, {
@@ -532,6 +541,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
 
   const handleGenerate = async () => {
     if (!active || generating) return;
+    if (!validateTextInput("Custom instructions", customInstructions, 50_000)) return;
     setModerationError(null);
     setGenerating(true);
     try {
@@ -590,6 +600,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   // ── Template handlers ──
   const handleSaveTemplate = async () => {
     if (!active || savingTemplate) return;
+    if (!validateTextInput("Output template", outputTemplate, 100_000)) return;
     setSavingTemplate(true);
     try {
       await api.sections.update(deal.id, active.id, { output_template: outputTemplate || null });
@@ -635,6 +646,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   // ── Custom Instructions handler ──
   const handleSaveInstructions = async () => {
     if (!active || savingInstructions) return;
+    if (!validateTextInput("Custom instructions", customInstructions, 50_000)) return;
     setSavingInstructions(true);
     try {
       await api.sections.update(deal.id, active.id, {
@@ -655,11 +667,10 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
     setUrlError(null);
     const normalized = Array.from(new Set(sourceUrls.map((url) => url.trim()).filter(Boolean)));
     try {
+      if (normalized.length > 10) throw new Error("A section can contain at most 10 URLs.");
       for (const url of normalized) {
-        const parsed = new URL(url);
-        if (!["http:", "https:"].includes(parsed.protocol)) {
-          throw new Error("Only HTTP and HTTPS URLs are supported.");
-        }
+        const error = sourceUrlError(url);
+        if (error) throw new Error(error);
       }
     } catch (error) {
       setUrlError(error instanceof Error ? error.message : "Enter valid HTTP/HTTPS URLs.");
@@ -680,6 +691,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
 
   const handleSaveContent = async () => {
     if (!active || savingContent) return;
+    if (!validateTextInput("Narrative content", editedContent, 500_000)) return;
     setSavingContent(true);
     try {
       await api.sections.update(deal.id, active.id, { generated_content: editedContent });
@@ -2454,14 +2466,12 @@ function MarkdownRenderer({
   // Lazy import react-markdown
   const [ReactMarkdown, setReactMarkdown] = useState<any>(null);
   const [remarkGfm, setRemarkGfm] = useState<any>(null);
-  const [rehypeRaw, setRehypeRaw] = useState<any>(null);
 
   useEffect(() => {
-    Promise.all([import("react-markdown"), import("remark-gfm"), import("rehype-raw")]).then(
-      ([md, gfm, raw]) => {
+    Promise.all([import("react-markdown"), import("remark-gfm")]).then(
+      ([md, gfm]) => {
         setReactMarkdown(() => md.default);
         setRemarkGfm(() => gfm.default);
-        setRehypeRaw(() => raw.default);
       },
     );
   }, []);
@@ -2485,7 +2495,7 @@ function MarkdownRenderer({
   return (
     <ReactMarkdown
       remarkPlugins={remarkGfm ? [remarkGfm] : []}
-      rehypePlugins={rehypeRaw ? [rehypeRaw] : []}
+      skipHtml
       components={{
         table: (props: any) => (
           <CustomTable {...props} primaryColor={primaryColor} secondaryColor={secondaryColor} />
@@ -2579,6 +2589,7 @@ function VersionsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
 
   const submit = async () => {
     if (submitting) return;
+    if (!validateTextInput("Reviewer notes", notes, 4000)) return;
     setSubmitting(true);
     try {
       await api.versions.submit(deal.id, notes);
@@ -2593,6 +2604,7 @@ function VersionsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
 
   const approve = async (versionId: string) => {
     if (reviewingVersionId) return;
+    if (!validateTextInput("Review comments", reviewComments[versionId] || "", 4000)) return;
     setReviewingVersionId(versionId);
     try {
       await api.versions.approve(deal.id, versionId, reviewComments[versionId] || "");
@@ -2607,6 +2619,7 @@ function VersionsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
 
   const deny = async (versionId: string) => {
     const comments = (reviewComments[versionId] || "").trim();
+    if (!validateTextInput("Review comments", comments, 4000)) return;
     if (!comments) {
       alert("Enter review comments before denying this version.");
       return;

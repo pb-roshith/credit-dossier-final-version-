@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     # Authentication policy. SECURITY_QUESTIONS uses | as the separator so it
     # is convenient to override in a .env file.
     PASSWORD_MIN_LENGTH: int = 12
-    PASSWORD_MAX_LENGTH: int = 128
+    PASSWORD_MAX_LENGTH: int = 31
     PASSWORD_MIN_UPPERCASE: int = 1
     PASSWORD_MIN_LOWERCASE: int = 1
     PASSWORD_MIN_DIGITS: int = 1
