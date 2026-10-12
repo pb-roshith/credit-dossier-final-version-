@@ -6,7 +6,7 @@ import uuid
 from dataclasses import dataclass
 
 from fastapi import Request
-from fastapi.responses import JSONResponse
+from app.responses import Utf8JSONResponse as JSONResponse
 
 
 @dataclass(frozen=True)
@@ -142,5 +142,5 @@ def error_response(
     return JSONResponse(
         status_code=status_code or definition.http_status,
         content=error_payload(request, code),
-        headers=headers,
+        headers={**(headers or {}), "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"},
     )

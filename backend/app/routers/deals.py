@@ -2,7 +2,7 @@
 Deals API router — CRUD operations for deals.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Response
 from sqlalchemy.orm import Session
 import pypdf
 import io
@@ -18,6 +18,7 @@ from app.services.mcp_service import MCPClientService
 from app.services.library_sync_service import LibrarySyncService
 from app.auth import get_current_user, require_deal_owner, require_relationship_manager
 from app.models.user import User
+from app.responses import Utf8JSONResponse
 from app.file_validation import THEME_EXTENSIONS, UploadValidationError, validate_uploaded_file
 import httpx
 import logging
@@ -45,22 +46,26 @@ async def _refresh_company_documents(deal_id: str) -> None:
     )
 
 
-@router.get("", response_model=list[DealListResponse])
+@router.get("", response_model=list[DealListResponse], response_class=Utf8JSONResponse)
 def list_deals(
+    response: Response,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """List all deals. Submit filters to POST /search, never in a URL."""
+    response.headers["Cache-Control"] = "no-store"
     return _list_deals(db, current_user)
 
 
-@router.post("/search", response_model=list[DealListResponse])
+@router.post("/search", response_model=list[DealListResponse], response_class=Utf8JSONResponse)
 def search_deals(
     filters: DealSearchRequest,
+    response: Response,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Search deals using a bounded JSON request body."""
+    response.headers["Cache-Control"] = "no-store"
     return _list_deals(db, current_user, filters.status, filters.search)
 
 
@@ -104,9 +109,10 @@ def _list_deals(
     return result
 
 
-@router.get("/{deal_id}", response_model=DealResponse, dependencies=[Depends(require_deal_owner)])
-def get_deal(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+@router.get("/{deal_id}", response_model=DealResponse, response_class=Utf8JSONResponse, dependencies=[Depends(require_deal_owner)])
+def get_deal(deal_id: str, background_tasks: BackgroundTasks, response: Response, db: Session = Depends(get_db)):
     """Get a single deal with all sections, audit entries, and versions."""
+    response.headers["Cache-Control"] = "no-store"
     deal = DealService.get_deal(db, deal_id)
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")

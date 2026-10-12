@@ -10,7 +10,8 @@ from pathlib import Path
 DOCUMENT_EXTENSIONS = frozenset(
     {".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".csv", ".txt", ".md", ".json"}
 )
-TEMPLATE_EXTENSIONS = frozenset({".md", ".txt", ".docx", ".doc"})
+TEMPLATE_EXTENSIONS = frozenset({".md", ".txt", ".docx"})
+MAX_TEMPLATE_BYTES = 5 * 1024 * 1024
 THEME_EXTENSIONS = frozenset({".pdf", ".txt"})
 
 _OOXML_DIRECTORIES = {
@@ -26,6 +27,48 @@ _OLE_SIGNATURE = bytes.fromhex("D0CF11E0A1B11AE1")
 
 class UploadValidationError(ValueError):
     """Raised when an uploaded file is outside the configured allowlist."""
+
+
+def validate_template_file(filename: str | None, file_bytes: bytes) -> str:
+    """Bound template size and reject active content before document parsing."""
+    if len(file_bytes) > MAX_TEMPLATE_BYTES:
+        raise UploadValidationError("Template file exceeds the 5 MB limit.")
+    safe_name = validate_uploaded_file(filename, file_bytes, allowed_extensions=TEMPLATE_EXTENSIONS)
+    if Path(safe_name).suffix.lower() == ".docx":
+        from xml.etree import ElementTree
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as archive:
+                entries = archive.infolist()
+                if len(entries) > 1000 or sum(entry.file_size for entry in entries) > 20 * 1024 * 1024:
+                    raise ValueError("Archive too large")
+                names = [entry.filename for entry in entries]
+                if len(names) != len(set(names)) or "word/document.xml" not in names:
+                    raise ValueError("Invalid document structure")
+                for entry in entries:
+                    name = entry.filename.lower()
+                    if (entry.flag_bits & 1 or name.startswith("/") or "\\" in name
+                            or ".." in name.split("/") or "vbaproject" in name
+                            or "/embeddings/" in name or "/activex/" in name):
+                        raise ValueError("Unsafe archive entry")
+                    if name.endswith((".xml", ".rels")):
+                        xml_bytes = archive.read(entry)
+                        # Reject DTD/entity declarations before parsing, including
+                        # UTF-16/32 encodings used to disguise the declarations.
+                        declarations = xml_bytes.replace(b"\x00", b"").lower()
+                        if b"<!doctype" in declarations or b"<!entity" in declarations:
+                            raise ValueError("Unsafe XML declaration")
+                        root = ElementTree.fromstring(xml_bytes)
+                        if name.endswith(".rels") and any(
+                            node.attrib.get("TargetMode", "").lower() == "external" for node in root.iter()
+                        ):
+                            raise ValueError("External relationship")
+                        if name == "[content_types].xml" and any(
+                            "macroenabled" in node.attrib.get("ContentType", "").lower() for node in root.iter()
+                        ):
+                            raise ValueError("Macro content")
+        except Exception as exc:
+            raise UploadValidationError("The uploaded DOCX template is invalid or contains unsupported active or external content.") from exc
+    return safe_name
 
 
 def _safe_filename(filename: str | None) -> str:

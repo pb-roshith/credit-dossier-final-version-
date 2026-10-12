@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import tsconfigPaths from "vite-tsconfig-paths";
 import tailwindcss from "@tailwindcss/vite";
+import { nitro } from "nitro/vite";
 
 export default defineConfig({
   plugins: [
@@ -16,6 +17,17 @@ export default defineConfig({
           specifiers: ["server-only"]
         }
       }
+    }),
+    nitro({
+      preset: "node-server",
+      routeRules: {
+        "/**": {
+          headers: { "Strict-Transport-Security": "max-age=31536000; includeSubDomains" },
+        },
+        "/api/**": {
+          proxy: `${(process.env.BACKEND_URL ?? "http://localhost:8000").replace(/\/$/, "")}/api/**`,
+        },
+      },
     }),
     react(),
     tailwindcss(),

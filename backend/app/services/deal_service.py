@@ -175,8 +175,10 @@ class DealService:
         )
 
     @staticmethod
-    def update_section(db: Session, section_id: str, data: dict) -> Section | None:
-        section = db.query(Section).filter(Section.id == section_id).first()
+    def update_section(db: Session, deal_id: str, section_id: str, data: dict) -> Section | None:
+        section = db.query(Section).filter(
+            Section.id == section_id, Section.deal_id == deal_id
+        ).first()
         if not section:
             return None
 

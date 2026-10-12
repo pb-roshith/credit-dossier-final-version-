@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, File, Response
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from pydantic import ValidationError
@@ -30,13 +30,13 @@ from app.schemas.narrative import (
 )
 from app.services.deal_service import DealService
 from app.services.narrative_service import NarrativeService
-from app.services.ingestion_service import extract_text_preview
 from app.services.moderation_service import ModerationService
 from app.services.narrative_version_service import NarrativeVersionService
 from app.auth import get_current_user, require_deal_owner
 from app.models.user import User
+from app.responses import Utf8JSONResponse
 from app.narrative_lock import NarrativeLockService
-from app.file_validation import TEMPLATE_EXTENSIONS, UploadValidationError, validate_uploaded_file
+from app.file_validation import TEMPLATE_EXTENSIONS, MAX_TEMPLATE_BYTES, UploadValidationError, validate_template_file
 
 router = APIRouter(prefix="/api/deals/{deal_id}/sections", tags=["sections"], dependencies=[Depends(require_deal_owner)])
 _draft_all_jobs: dict[str, dict[str, Any]] = {}
@@ -135,15 +135,17 @@ def list_sections(deal_id: str, db: Session = Depends(get_db)):
     return deal.sections
 
 
-@router.patch("/{section_id}", response_model=SectionResponse)
+@router.patch("/{section_id}", response_model=SectionResponse, response_class=Utf8JSONResponse)
 async def update_section(
     deal_id: str,
     section_id: str,
     data: SectionUpdate,
+    response: Response,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Update section expected output, custom instructions, output template, or state."""
+    response.headers["Cache-Control"] = "no-store"
     update_data = data.model_dump(exclude_unset=True)
     existing_section = _get_deal_section(db, deal_id, section_id)
     if not existing_section:
@@ -156,7 +158,7 @@ async def update_section(
         NarrativeVersionService.ensure_current(db, existing_section)
     if "source_urls" in update_data:
         update_data["url_scrape_details"] = None
-    section = DealService.update_section(db, section_id, update_data)
+    section = DealService.update_section(db, deal_id, section_id, update_data)
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
     if (
@@ -197,14 +199,16 @@ async def update_section(
     return section
 
 
-@router.post("/{section_id}/edit-lock", response_model=NarrativeEditLockResponse)
+@router.post("/{section_id}/edit-lock", response_model=NarrativeEditLockResponse, response_class=Utf8JSONResponse)
 def acquire_narrative_edit_lock(
     deal_id: str,
     section_id: str,
+    response: Response,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Acquire or renew the current user's short narrative editing lease."""
+    response.headers["Cache-Control"] = "no-store"
     section = NarrativeLockService.acquire(db, deal_id, section_id, current_user)
     return NarrativeEditLockResponse(
         section_id=section.id,
@@ -226,13 +230,16 @@ def release_narrative_edit_lock(
 @router.get(
     "/{section_id}/versions",
     response_model=list[NarrativeVersionResponse],
+    response_class=Utf8JSONResponse,
 )
 def list_narrative_versions(
     deal_id: str,
     section_id: str,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     """List generated and edited versions for one narrative."""
+    response.headers["Cache-Control"] = "no-store"
     section = _get_deal_section(db, deal_id, section_id)
     if not section or section.deal_id != deal_id:
         raise HTTPException(status_code=404, detail="Section not found")
@@ -528,16 +535,27 @@ async def upload_template(
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")
 
-    file_bytes = await file.read()
+    file_bytes = await file.read(MAX_TEMPLATE_BYTES + 1)
     try:
-        filename = validate_uploaded_file(
-            file.filename, file_bytes, allowed_extensions=TEMPLATE_EXTENSIONS
-        )
+        filename = validate_template_file(file.filename, file_bytes)
     except UploadValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     ext = Path(filename).suffix.lower()
 
-    template_text = extract_text_preview(file_bytes, filename)
+    if ext == ".docx":
+        import io
+        from docx import Document
+        try:
+            document = Document(io.BytesIO(file_bytes))
+            template_text = "\n".join(p.text for p in document.paragraphs)
+            template_text += "\n" + "\n".join(
+                " | ".join(cell.text for cell in row.cells)
+                for table in document.tables for row in table.rows
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Uploaded template could not be parsed.") from exc
+    else:
+        template_text = file_bytes.decode("utf-8-sig")
     try:
         SectionUpdate(output_template=template_text)
     except ValidationError as exc:
@@ -546,7 +564,7 @@ async def upload_template(
     # Save template file to disk
     template_dir = settings.upload_path / deal_id / "templates"
     template_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = f"{uuid.uuid4().hex[:8]}_{filename}"
+    safe_name = f"{uuid.uuid4().hex}{ext}"
     file_path = template_dir / safe_name
 
     with open(file_path, "wb") as f:
@@ -563,13 +581,15 @@ async def upload_template(
     return section
 
 
-@router.delete("/{section_id}/template", response_model=SectionResponse)
+@router.delete("/{section_id}/template", response_model=SectionResponse, response_class=Utf8JSONResponse)
 def delete_template(
     deal_id: str,
     section_id: str,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     """Remove the output template from a section."""
+    response.headers["Cache-Control"] = "no-store"
     section = _get_deal_section(db, deal_id, section_id)
     if not section:
         raise HTTPException(status_code=404, detail="Section not found")

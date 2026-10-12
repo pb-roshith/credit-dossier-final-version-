@@ -1,5 +1,7 @@
 import "./lib/error-capture";
 
+import { browserContentSecurityPolicy } from "./lib/browser-security";
+
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
 
@@ -11,9 +13,13 @@ let serverEntryPromise: Promise<ServerEntry> | undefined;
 
 async function getServerEntry(): Promise<ServerEntry> {
   if (!serverEntryPromise) {
-    serverEntryPromise = import("@tanstack/react-start/server-entry").then(
-      (m) => (m.default ?? m) as ServerEntry,
-    );
+    serverEntryPromise = import("@tanstack/react-start/server").then((m) => ({
+      fetch: m.createStartHandler((options) => {
+        options.responseHeaders.set("Content-Security-Policy", browserContentSecurityPolicy(options.router.options.ssr?.nonce));
+        options.responseHeaders.set("Cache-Control", "no-store");
+        return m.defaultStreamHandler(options);
+      }),
+    }));
   }
   return serverEntryPromise;
 }
@@ -39,12 +45,9 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
 
 function withBrowserSecurityHeaders(response: Response): Response {
   const headers = new Headers(response.headers);
-  headers.set(
-    "Content-Security-Policy",
-    "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; " +
-      "form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
-      "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'",
-  );
+  if (!headers.has("Content-Security-Policy")) {
+    headers.set("Content-Security-Policy", browserContentSecurityPolicy());
+  }
   headers.set("X-Frame-Options", "DENY");
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "no-referrer");

@@ -5,7 +5,7 @@ from __future__ import annotations
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from app.responses import Utf8JSONResponse as JSONResponse
 
 from app.config import settings
 

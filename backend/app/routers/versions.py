@@ -3,7 +3,7 @@
 import io
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -20,18 +20,21 @@ from app.schemas.deal import VersionCreate, VersionResponse, VersionReviewReques
 from app.services.deal_service import DealService
 from app.services.export_service import ExportService
 from app.report_security import safe_export_filename, secure_download_headers
+from app.responses import Utf8JSONResponse
 
 router = APIRouter(prefix="/api/deals/{deal_id}/versions", tags=["versions"], dependencies=[Depends(require_deal_owner)])
 
 
-@router.post("", response_model=VersionResponse, status_code=201)
+@router.post("", response_model=VersionResponse, status_code=201, response_class=Utf8JSONResponse)
 def submit_version(
     deal_id: str,
     data: VersionCreate,
+    response: Response,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_relationship_manager),
 ):
     """Submit current draft as a frozen version for review."""
+    response.headers["Cache-Control"] = "no-store"
     version = DealService.create_version(db, deal_id, data.notes, current_user.user_id)
     if not version:
         raise HTTPException(status_code=404, detail="Deal not found")

@@ -17,7 +17,8 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from app.cors import RouteCORSMiddleware
+from app.responses import Utf8JSONResponse
 
 from app.config import settings
 from app.database import engine, Base
@@ -156,6 +157,7 @@ app = FastAPI(
     description="Backend API for the Credit Pitch Book Pipeline — deals, narratives, exports.",
     version="2.0.0",
     lifespan=lifespan,
+    default_response_class=Utf8JSONResponse,
 )
 
 install_exception_handlers(app)
@@ -164,10 +166,11 @@ install_request_security_middleware(app)
 
 # ── CORS ────────────────────────────────────────────────────────
 app.add_middleware(
-    CORSMiddleware,
+    RouteCORSMiddleware,
+    router=app.router,
     allow_origins=settings.cors_allowed_origins,
     allow_credentials=True,
-    allow_methods=["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Accept", "Content-Type"],
     expose_headers=["Content-Disposition"],
 )

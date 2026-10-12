@@ -1299,7 +1299,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                   <input
                     type="file"
                     id="template-file-input"
-                    accept=".md,.txt,.docx,.doc"
+                    accept=".md,.txt,.docx"
                     className="text-xs w-full"
                     onChange={handleUploadTemplate}
                   />

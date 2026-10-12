@@ -49,6 +49,10 @@ def _parse_table_data(table_str: str) -> pd.DataFrame | None:
         return None
     
     headers = [col.replace('**', '').replace('*', '').strip() for col in lines[0].split('|')[1:-1]]
+    # Ambiguous columns cannot be plotted safely; retain the original table.
+    if not headers or any(not header for header in headers) or len(set(headers)) != len(headers):
+        return None
+
     rows = []
     for line in lines[2:]:
         cols = [col.replace('**', '').replace('*', '').strip() for col in line.split('|')[1:-1]]
@@ -67,10 +71,15 @@ def _parse_table_data(table_str: str) -> pd.DataFrame | None:
     return None
 
 
+def _xml_compatible_text(text: str) -> str:
+    """Remove characters forbidden by XML 1.0 (the DOCX document format)."""
+    return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]", "", text)
+
 def _clean_unprintable_chars(text: str) -> str:
     """Removes emojis, dingbats, and unsupported unicode characters that break PDF rendering."""
     # Keep ASCII, extended Latin, common punctuation, Euro, Pound, and dashes
     # This regex removes characters outside of these safe ranges.
+    text = _xml_compatible_text(text)
     clean_text = re.sub(r'[^\x00-\x7F\xA0-\xFF\u0100-\u017F\u2013-\u2014\u2018-\u201D\u20AC\u00A3]', '', text)
     return clean_text
 
@@ -214,7 +223,7 @@ class ExportService:
             return candidate if re.fullmatch(r"#[0-9A-Fa-f]{6}", candidate) else fallback
 
         def safe_text(value: object) -> str:
-            return html.escape(mask_sensitive_text(str(value or "")))
+            return html.escape(mask_sensitive_text(_xml_compatible_text(str(value or ""))))
 
         p_color = safe_color(getattr(deal, "primary_color", None), "#002060")
         s_color = safe_color(getattr(deal, "secondary_color", None), "#800020")
@@ -324,9 +333,12 @@ class ExportService:
         pisa_status = pisa.CreatePDF(html, dest=buffer)
         
         if pisa_status.err:
-            logger.error("Error generating PDF via xhtml2pdf")
-            
-        return buffer.getvalue()
+            raise RuntimeError("PDF rendering failed")
+
+        pdf_bytes = buffer.getvalue()
+        if not pdf_bytes.startswith(b"%PDF-"):
+            raise RuntimeError("PDF renderer returned an invalid document")
+        return pdf_bytes
 
     @staticmethod
     def generate_docx(deal: Deal) -> bytes:
@@ -363,7 +375,17 @@ class ExportService:
         p_color = getattr(deal, "primary_color", None) or "#002060"
         s_color = getattr(deal, "secondary_color", None) or "#800020"
         
-        theme_palette = deal.theme_palette if isinstance(deal.theme_palette, list) else []
+        raw_palette = getattr(deal, "theme_palette", None)
+        if isinstance(raw_palette, str):
+            import json
+            try:
+                raw_palette = json.loads(raw_palette)
+            except (ValueError, TypeError):
+                raw_palette = []
+        theme_palette = [
+            color for color in raw_palette[:8]
+            if isinstance(color, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", color)
+        ] if isinstance(raw_palette, list) else []
         if not theme_palette:
             theme_palette = [p_color, s_color, "#64748b", "#94a3b8", "#cbd5e1"]
 
@@ -395,7 +417,7 @@ class ExportService:
         txBox2 = slide.shapes.add_textbox(Inches(1), Inches(3.5), Inches(11), Inches(1))
         tf2 = txBox2.text_frame
         p2 = tf2.paragraphs[0]
-        p2.text = mask_sensitive_text(deal.customer)
+        p2.text = _xml_compatible_text(mask_sensitive_text(deal.customer))
         p2.font.size = Pt(28)
         p2.font.color.rgb = secondary_rgb
         p2.alignment = PP_ALIGN.CENTER
@@ -498,7 +520,7 @@ class ExportService:
                 title_shape = slide.shapes.title
                 body_shape = slide.placeholders[1]
 
-                title_shape.text = slide_info.get("title", section.title)
+                title_shape.text = _xml_compatible_text(str(slide_info.get("title", section.title)))
                 title_shape.text_frame.paragraphs[0].font.color.rgb = primary_rgb
                 
                 tf = body_shape.text_frame
@@ -509,7 +531,7 @@ class ExportService:
                         p = tf.paragraphs[0]
                     else:
                         p = tf.add_paragraph()
-                    p.text = str(point)
+                    p.text = _xml_compatible_text(str(point))
                     p.font.size = Pt(16)
                     p.font.color.rgb = RGBColor(0x33, 0x33, 0x33) # Dark Gray, not white
                     p.level = 0
@@ -526,7 +548,7 @@ class ExportService:
 
             for headers, rows in native_tables:
                 slide = prs.slides.add_slide(prs.slide_layouts[1])
-                slide.shapes.title.text = f"{section.title} - Data"
+                slide.shapes.title.text = _xml_compatible_text(f"{section.title} - Data")
                 slide.shapes.title.text_frame.paragraphs[0].font.color.rgb = primary_rgb
                 
                 sp = slide.placeholders[1]._element
@@ -545,7 +567,7 @@ class ExportService:
                 for col_idx, header in enumerate(headers):
                     if col_idx >= cols_cnt: break
                     cell = table.cell(0, col_idx)
-                    cell.text = header
+                    cell.text = _xml_compatible_text(header)
                     cell.text_frame.paragraphs[0].font.bold = True
                     cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
                     cell.fill.solid()
@@ -555,7 +577,7 @@ class ExportService:
                     for col_idx, cell_data in enumerate(row_data):
                         if col_idx < cols_cnt:
                             cell = table.cell(row_idx + 1, col_idx)
-                            cell.text = str(cell_data)
+                            cell.text = _xml_compatible_text(str(cell_data))
                             cell.text_frame.paragraphs[0].font.size = Pt(12)
                             cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(0x33, 0x33, 0x33)
 

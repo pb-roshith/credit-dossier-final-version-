@@ -30,6 +30,7 @@ from app.local_secrets import rotate_if_due
 from app.secret_provider import is_production
 from app.models.user import AuditLog, AuthSession, SecurityAnswer, User
 from app.schemas.input_validation import StrictInputModel
+from app.responses import Utf8JSONResponse
 
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
@@ -145,9 +146,10 @@ def _replace_security_answers(
         ))
 
 
-@router.get("/configuration")
-def authentication_configuration(db: Session = Depends(get_db)):
+@router.get("/configuration", response_class=Utf8JSONResponse)
+def authentication_configuration(response: Response, db: Session = Depends(get_db)):
     """Public rules needed by registration and password recovery screens."""
+    response.headers["Cache-Control"] = "no-store"
     return {
         "password_policy": password_policy(db),
         "security_questions": settings.security_question_options,
@@ -173,7 +175,7 @@ def _set_session_cookie(
     )
 
 
-@router.post("/login", response_model=UserResponse)
+@router.post("/login", response_model=UserResponse, response_class=Utf8JSONResponse)
 def login(
     credentials: Credentials,
     response: Response,
@@ -181,6 +183,8 @@ def login(
     db: Session = Depends(get_db),
 ):
     request.state.audit_user_id = credentials.user_id
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
     request.state.audit_resource_id = f"user:{credentials.user_id}"
     user = db.query(User).filter(User.user_id == credentials.user_id).first()
     if user and user.is_active and not user.is_approved:
@@ -292,11 +296,12 @@ def register(
     return UserResponse(user_id=user.user_id, role=user.role)
 
 
-@router.post("/account-status", response_model=AccountStatusResponse)
-def account_status(data: UserIdRequest, request: Request, db: Session = Depends(get_db)):
+@router.post("/account-status", response_model=AccountStatusResponse, response_class=Utf8JSONResponse)
+def account_status(data: UserIdRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     """Allow the sign-in screen to identify accounts waiting for approval."""
     request.state.audit_user_id = data.user_id
     request.state.audit_resource_id = f"user:{data.user_id}"
+    response.headers["Cache-Control"] = "no-store"
     user = db.query(User).filter(User.user_id == data.user_id).first()
     if user and user.is_active and not user.is_approved:
         return AccountStatusResponse(
@@ -307,7 +312,9 @@ def account_status(data: UserIdRequest, request: Request, db: Session = Depends(
 
 
 @router.get("/me", response_model=UserResponse)
-def me(current_user: User = Depends(get_current_user)):
+def me(response: Response, current_user: User = Depends(get_current_user)):
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
     return UserResponse(user_id=current_user.user_id, role=current_user.role)
 
 

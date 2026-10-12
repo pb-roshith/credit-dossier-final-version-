@@ -269,7 +269,8 @@ def get_current_user(
         raise _unauthorized("Your session is invalid. Please sign in again.")
 
     user = auth_session.user
-    if not user or not user.is_active or not user.is_approved:
+    if (not user or not user.is_active or not user.is_approved
+            or user.is_locked or user.role not in ALLOWED_ROLES):
         raise _unauthorized("This user account is inactive.")
     request.state.audit_user_id = user.user_id
 

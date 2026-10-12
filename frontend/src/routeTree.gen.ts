@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as ObservabilityRouteImport } from './routes/observability'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as DashboardRouteImport } from './routes/dashboard'
@@ -21,6 +22,11 @@ import { Route as DealsDealIdRouteImport } from './routes/deals.$dealId'
 const ProfileRoute = ProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ObservabilityRoute = ObservabilityRouteImport.update({
@@ -65,6 +71,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
   '/observability': typeof ObservabilityRoute
+  '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
   '/deals/$dealId': typeof DealsDealIdRoute
   '/deals/new': typeof DealsNewRoute
@@ -75,6 +82,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
   '/observability': typeof ObservabilityRoute
+  '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
   '/deals/$dealId': typeof DealsDealIdRoute
   '/deals/new': typeof DealsNewRoute
@@ -86,6 +94,7 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
   '/observability': typeof ObservabilityRoute
+  '/privacy': typeof PrivacyRoute
   '/profile': typeof ProfileRoute
   '/deals/$dealId': typeof DealsDealIdRoute
   '/deals/new': typeof DealsNewRoute
@@ -98,6 +107,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/login'
     | '/observability'
+    | '/privacy'
     | '/profile'
     | '/deals/$dealId'
     | '/deals/new'
@@ -108,6 +118,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/login'
     | '/observability'
+    | '/privacy'
     | '/profile'
     | '/deals/$dealId'
     | '/deals/new'
@@ -118,6 +129,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/login'
     | '/observability'
+    | '/privacy'
     | '/profile'
     | '/deals/$dealId'
     | '/deals/new'
@@ -129,6 +141,7 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRoute
   LoginRoute: typeof LoginRoute
   ObservabilityRoute: typeof ObservabilityRoute
+  PrivacyRoute: typeof PrivacyRoute
   ProfileRoute: typeof ProfileRoute
   DealsDealIdRoute: typeof DealsDealIdRoute
   DealsNewRoute: typeof DealsNewRoute
@@ -141,6 +154,13 @@ declare module '@tanstack/react-router' {
       path: '/profile'
       fullPath: '/profile'
       preLoaderRoute: typeof ProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/observability': {
@@ -201,6 +221,7 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardRoute: DashboardRoute,
   LoginRoute: LoginRoute,
   ObservabilityRoute: ObservabilityRoute,
+  PrivacyRoute: PrivacyRoute,
   ProfileRoute: ProfileRoute,
   DealsDealIdRoute: DealsDealIdRoute,
   DealsNewRoute: DealsNewRoute,

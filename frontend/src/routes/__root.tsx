@@ -106,6 +106,9 @@ function RootShell({ children }: { children: ReactNode }) {
       </head>
       <body>
         {children}
+        <footer className="border-t px-6 py-4 text-center text-sm">
+          <a href="/privacy" className="text-primary underline">Privacy Policy</a>
+        </footer>
         <Scripts />
       </body>
     </html>
@@ -126,28 +129,29 @@ function RootComponent() {
 
 function AuthenticatedApp() {
   const { user, loading } = useAuth();
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const pathname = useRouterState({ select: (state) => state.location.pathname }).replace(/\/+$/, "") || "/";
   const navigate = useNavigate();
   const isLogin = pathname === "/login";
+  const isPublicPage = isLogin || pathname === "/privacy";
   const isAdminDashboard = pathname === "/admin";
   const isProfile = pathname === "/profile";
   const adminOutsideAllowedPages =
-    user?.role === "admin" && !isLogin && !isAdminDashboard && !isProfile;
+    user?.role === "admin" && !isPublicPage && !isAdminDashboard && !isProfile;
   const nonAdminOnAdminDashboard = Boolean(user && user.role !== "admin" && isAdminDashboard);
 
   useEffect(() => {
     if (loading) return;
-    if (!user && !isLogin) void navigate({ to: "/login", replace: true });
+    if (!user && !isPublicPage) void navigate({ to: "/login", replace: true });
     if (user && isLogin) {
       void navigate({ to: user.role === "admin" ? "/admin" : "/", replace: true });
     }
     if (adminOutsideAllowedPages) void navigate({ to: "/admin", replace: true });
     if (nonAdminOnAdminDashboard) void navigate({ to: "/", replace: true });
-  }, [user, loading, isLogin, adminOutsideAllowedPages, nonAdminOnAdminDashboard, navigate]);
+  }, [user, loading, isLogin, isPublicPage, adminOutsideAllowedPages, nonAdminOnAdminDashboard, navigate]);
 
   if (
-    loading ||
-    (!user && !isLogin) ||
+    (loading && !isPublicPage) ||
+    (!user && !isPublicPage) ||
     (user && isLogin) ||
     adminOutsideAllowedPages ||
     nonAdminOnAdminDashboard
@@ -159,7 +163,7 @@ function AuthenticatedApp() {
     );
   }
 
-  if (isLogin) return <Outlet />;
+  if (isPublicPage) return <Outlet />;
 
   return (
     <div className="min-h-screen bg-surface">

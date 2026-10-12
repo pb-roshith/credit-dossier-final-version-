@@ -1,15 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from typing import List, Dict, Any
 
 from app.services.mcp_service import MCPClientService
 from app.auth import get_current_user
 from app.models.user import User
+from app.responses import Utf8JSONResponse
 
-router = APIRouter(prefix="/api/companies", tags=["companies"])
+router = APIRouter(prefix="/api/companies", tags=["companies"], default_response_class=Utf8JSONResponse)
 
 @router.get("", response_model=List[Dict[str, Any]])
-async def list_companies(current_user: User = Depends(get_current_user)):
+async def list_companies(response: Response, current_user: User = Depends(get_current_user)):
     """List all companies from MCP."""
+    response.headers["Cache-Control"] = "no-store"
     # if not MCPClientService.is_connected:
     #     raise HTTPException(status_code=503, detail="MCP server is currently unreachable.")
     if not MCPClientService.is_connected:
@@ -38,8 +40,9 @@ async def get_company_documents(company_name: str, current_user: User = Depends(
     return docs
 
 @router.get("/{company_name}/details", response_model=Dict[str, Any])
-async def get_company_details(company_name: str, current_user: User = Depends(get_current_user)):
+async def get_company_details(company_name: str, response: Response, current_user: User = Depends(get_current_user)):
     """Get details for a specific company from MCP."""
+    response.headers["Cache-Control"] = "no-store"
     # if not MCPClientService.is_connected:
     #     raise HTTPException(status_code=503, detail="MCP server is currently unreachable.")
     if not MCPClientService.is_connected:
