@@ -90,7 +90,7 @@ export function CompanyCombobox({ value, onChange, className }: CompanyComboboxP
             if (!search) return 1;
             return val.toLowerCase().includes(search.toLowerCase()) ? 1 : 0;
         }}>
-          <CommandInput placeholder="Search company name…" />
+          <CommandInput maxLength={256} placeholder="Search company name…" />
           <CommandList>
             <CommandEmpty>
               <div className="flex flex-col items-center gap-1 py-2">

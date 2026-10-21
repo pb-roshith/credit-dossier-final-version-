@@ -5,11 +5,16 @@ Documents are uploaded once at the deal level (processed via Mistral OCR),
 then linked to one or more sections via a multi-select picker.
 """
 
+
+from typing import Annotated
+from fastapi import Path as InputPath
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session, joinedload
 
+from pydantic import AfterValidator
+from app.schemas.input_validation import validate_markdown_text, validate_source_url
 from app.database import get_db
 from app.models.deal import Deal, Section
 from app.models.document import DealDocument, SectionDocumentLink
@@ -21,7 +26,7 @@ from app.schemas.deal import (
 from app.services.ingestion_service import IngestionService
 from app.services.deal_service import DealService
 from app.auth import require_deal_owner
-from app.file_validation import UploadValidationError, validate_uploaded_file
+from app.file_validation import read_uploaded_file, UploadValidationError, validate_uploaded_file
 
 router = APIRouter(prefix="/api/deals/{deal_id}", tags=["documents"], dependencies=[Depends(require_deal_owner)])
 
@@ -30,7 +35,7 @@ router = APIRouter(prefix="/api/deals/{deal_id}", tags=["documents"], dependenci
 
 
 @router.get("/documents", response_model=list[DealDocumentResponse])
-def list_deal_documents(deal_id: str, db: Session = Depends(get_db)):
+def list_deal_documents(deal_id: Annotated[str, InputPath(min_length=1, max_length=128)], db: Session = Depends(get_db)):
     """List all documents uploaded to this deal."""
     deal = db.query(Deal).filter(Deal.id == deal_id).first()
     if not deal:
@@ -50,12 +55,12 @@ def list_deal_documents(deal_id: str, db: Session = Depends(get_db)):
     status_code=201,
 )
 async def upload_deal_document(
-    deal_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     source_type: Literal["file", "url", "text"] = Form(...),
     file: UploadFile | None = File(None),
-    url: str | None = Form(None, max_length=2048),
-    text_content: str | None = Form(None, max_length=500_000),
-    note: str | None = Form(None, max_length=4000),
+    url: Annotated[str | None, Form(max_length=2048), AfterValidator(validate_source_url)] = None,
+    text_content: Annotated[str | None, Form(max_length=500_000), AfterValidator(validate_markdown_text)] = None,
+    note: Annotated[str | None, Form(max_length=4000), AfterValidator(validate_markdown_text)] = None,
     db: Session = Depends(get_db),
 ):
     """
@@ -78,7 +83,7 @@ async def upload_deal_document(
             raise HTTPException(
                 status_code=400, detail="File is required for source_type='file'"
             )
-        file_bytes = await file.read()
+        file_bytes = await read_uploaded_file(file)
         try:
             filename = validate_uploaded_file(file.filename, file_bytes)
         except UploadValidationError as exc:
@@ -119,8 +124,8 @@ async def upload_deal_document(
 
 @router.delete("/documents/{document_id}", status_code=204)
 def delete_deal_document(
-    deal_id: str,
-    document_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    document_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     db: Session = Depends(get_db),
 ):
     """Delete a document from the deal library (and all section links)."""
@@ -142,8 +147,8 @@ def delete_deal_document(
     response_model=list[SectionDocumentLinkResponse],
 )
 def link_documents_to_section(
-    deal_id: str,
-    section_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    section_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     body: LinkDocumentsRequest,
     db: Session = Depends(get_db),
 ):
@@ -186,9 +191,9 @@ def link_documents_to_section(
     status_code=204,
 )
 def unlink_document_from_section(
-    deal_id: str,
-    section_id: str,
-    document_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    section_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    document_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     db: Session = Depends(get_db),
 ):
     """Remove a document link from a section (does not delete the document)."""
@@ -215,8 +220,8 @@ def unlink_document_from_section(
     response_model=list[SectionDocumentLinkResponse],
 )
 def list_section_documents(
-    deal_id: str,
-    section_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    section_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     db: Session = Depends(get_db),
 ):
     """List all documents linked to a specific section."""

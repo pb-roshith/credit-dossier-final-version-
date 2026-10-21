@@ -6,6 +6,21 @@ import io
 import zipfile
 from pathlib import Path
 
+from fastapi import HTTPException, UploadFile
+
+
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+
+
+async def read_uploaded_file(file: UploadFile) -> bytes:
+    """Read at most the upload limit plus one byte before rejecting a file."""
+    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Files cannot exceed 50 MB.")
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Files cannot exceed 50 MB.")
+    return content
+
 
 DOCUMENT_EXTENSIONS = frozenset(
     {".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".csv", ".txt", ".md", ".json"}
@@ -72,6 +87,10 @@ def validate_template_file(filename: str | None, file_bytes: bytes) -> str:
 
 
 def _safe_filename(filename: str | None) -> str:
+    if filename and len(filename) > 255:
+        raise UploadValidationError("Filename cannot exceed 255 characters.")
+    if filename and any(c in filename for c in '<>"'):
+        raise UploadValidationError("Filename must not contain HTML markup or quotes.")
     normalized = (filename or "").replace("\\", "/")
     safe = Path(normalized).name.strip()
     if not safe or safe in {".", ".."}:
@@ -114,6 +133,8 @@ def validate_uploaded_file(
     allowed_extensions: frozenset[str] = DOCUMENT_EXTENSIONS,
 ) -> str:
     """Validate extension and content, returning a path-safe filename."""
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        raise UploadValidationError("Files cannot exceed 50 MB.")
     safe_filename = _safe_filename(filename)
     extension = Path(safe_filename).suffix.lower()
     supported = ", ".join(sorted(allowed_extensions))

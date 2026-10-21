@@ -22,7 +22,7 @@ export default defineConfig({
       preset: "node-server",
       routeRules: {
         "/**": {
-          headers: { "Strict-Transport-Security": "max-age=31536000; includeSubDomains" },
+          headers: { "Strict-Transport-Security": "max-age=31536000; includeSubDomains", "X-Content-Type-Options": "nosniff" },
         },
         "/api/**": {
           proxy: `${(process.env.BACKEND_URL ?? "http://localhost:8000").replace(/\/$/, "")}/api/**`,
@@ -50,6 +50,7 @@ export default defineConfig({
     ignoreOutdatedRequests: true
   },
   server: {
+    headers: { "X-Content-Type-Options": "nosniff" },
     host: "localhost",
     port: 8080,
     proxy: {

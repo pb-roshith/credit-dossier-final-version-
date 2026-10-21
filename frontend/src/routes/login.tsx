@@ -49,10 +49,11 @@ function LoginPage() {
 
   useEffect(() => {
     setApprovalMessage(null);
-    const normalizedUserId = userId.trim().toLowerCase();
+    const normalizedUserId = userId.toLowerCase();
     if (
       mode !== "login" ||
       normalizedUserId.length < 3 ||
+      normalizedUserId.length > 31 ||
       !/^[a-z0-9._-]+$/.test(normalizedUserId)
     ) {
       return;
@@ -73,6 +74,10 @@ function LoginPage() {
     event.preventDefault();
     setError(null);
     setSuccess(null);
+    if ([userId, password, confirmPassword].some((value) => /\s/.test(value))) {
+      setError("User ID and password cannot contain spaces.");
+      return;
+    }
     if (userId.length > 31 || password.length > 31 || confirmPassword.length > 31) {
       setError("User ID and password must not exceed 31 characters.");
       return;
@@ -80,7 +85,7 @@ function LoginPage() {
     if (mode === "reset" && !resetQuestionsLoaded) {
       setSubmitting(true);
       try {
-        const questions = await getResetQuestions(userId.trim());
+        const questions = await getResetQuestions(userId);
         setSecurityResponses(questions.map((question) => ({ question, answer: "" })));
         setResetQuestionsLoaded(true);
       } catch {
@@ -98,12 +103,12 @@ function LoginPage() {
     setSubmitting(true);
     try {
       if (mode === "login") {
-        const loggedIn = await login({ user_id: userId.trim(), password });
+        const loggedIn = await login({ user_id: userId, password });
         await navigate({ to: loggedIn.role === "admin" ? "/admin" : "/" });
         return;
       } else if (mode === "register") {
         await register({
-          user_id: userId.trim(),
+          user_id: userId,
           password,
           confirm_password: confirmPassword,
           role,
@@ -118,7 +123,7 @@ function LoginPage() {
         return;
       } else {
         await resetPassword({
-          user_id: userId.trim(),
+          user_id: userId,
           security_questions: securityResponses,
           new_password: password,
           confirm_password: confirmPassword,
@@ -228,8 +233,17 @@ function LoginPage() {
                 required
                 minLength={3}
                 maxLength={31}
+                pattern="[A-Za-z0-9._\-]{3,31}"
+                title="Use 3?31 letters, numbers, periods, hyphens, or underscores. Spaces are not allowed."
                 value={userId}
-                onChange={(event) => setUserId(event.target.value)}
+                onChange={(event) => {
+                      if (/\s/.test(event.target.value)) {
+                        setError("User ID and password cannot contain spaces.");
+                        return;
+                      }
+                      setError(null);
+                      setUserId(event.target.value);
+                    }}
                 className="h-11 w-full rounded-md border border-input bg-background px-3 font-normal outline-none focus:ring-2 focus:ring-ring"
                 placeholder="Enter your user ID"
               />
@@ -247,7 +261,14 @@ function LoginPage() {
                     }
                     type={showPassword ? "text" : "password"}
                     value={password}
-                    onChange={(event) => setPassword(event.target.value)}
+                    onChange={(event) => {
+                      if (/\s/.test(event.target.value)) {
+                        setError("User ID and password cannot contain spaces.");
+                        return;
+                      }
+                      setError(null);
+                      setPassword(event.target.value);
+                    }}
                     onCopy={(event) => event.preventDefault()}
                     onCut={(event) => event.preventDefault()}
                     onPaste={(event) => event.preventDefault()}
@@ -281,7 +302,14 @@ function LoginPage() {
                     maxLength={Math.min(31, configuration?.password_policy.max_length ?? 31)}
                     type={showConfirmPassword ? "text" : "password"}
                     value={confirmPassword}
-                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    onChange={(event) => {
+                      if (/\s/.test(event.target.value)) {
+                        setError("User ID and password cannot contain spaces.");
+                        return;
+                      }
+                      setError(null);
+                      setConfirmPassword(event.target.value);
+                    }}
                     onCopy={(event) => event.preventDefault()}
                     onCut={(event) => event.preventDefault()}
                     onPaste={(event) => event.preventDefault()}

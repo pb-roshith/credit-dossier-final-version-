@@ -4,6 +4,8 @@ export function browserContentSecurityPolicy(nonce?: string): string {
   const scriptSources = validNonce
     ? `'self' 'nonce-${validNonce}' 'strict-dynamic'`
     : "'self'";
+  // React and Radix use dynamic style attributes for positioning and charts.
+  // This style-only exception does not authorize inline JavaScript.
   const styleSources = validNonce ? `'self' 'nonce-${validNonce}'` : "'self'";
   return "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; " +
     `form-action 'self'; script-src ${scriptSources}; script-src-attr 'none'; ` +

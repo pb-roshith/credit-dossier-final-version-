@@ -1,9 +1,12 @@
 """Administrator-only application security configuration and audit data."""
 
+
+from typing import Annotated
+from fastapi import Path as InputPath
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AfterValidator, BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from app.auth import hash_password, password_policy, require_admin, validate_password_strength
@@ -12,7 +15,7 @@ from app.database import get_db
 from app.local_secrets import rotation_status
 from app.secret_provider import is_production
 from app.models.user import AuditLog, AuthSession, PasswordPolicyConfiguration, User
-from app.schemas.input_validation import StrictInputModel
+from app.schemas.input_validation import StrictInputModel, normalize_user_id
 
 
 router = APIRouter(
@@ -130,12 +133,12 @@ def list_pending_user_approvals(request: Request, db: Session = Depends(get_db))
 
 @router.post("/user-approvals/{user_id}/approve", response_model=PendingUserResponse)
 def approve_user(
-    user_id: str,
+    user_id: Annotated[str, InputPath(min_length=3, max_length=31), AfterValidator(normalize_user_id)],
     request: Request,
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    normalized_user_id = user_id.strip().lower()
+    normalized_user_id = user_id
     request.state.audit_resource_id = f"user:{normalized_user_id}"
     user = db.query(User).filter(User.user_id == normalized_user_id).first()
     if not user:
@@ -159,8 +162,8 @@ def list_locked_users(request: Request, db: Session = Depends(get_db)):
 
 
 @router.post("/locked-users/{user_id}/unlock", response_model=LockedUserResponse)
-def unlock_user(user_id: str, request: Request, db: Session = Depends(get_db)):
-    normalized_user_id = user_id.strip().lower()
+def unlock_user(user_id: Annotated[str, InputPath(min_length=3, max_length=31), AfterValidator(normalize_user_id)], request: Request, db: Session = Depends(get_db)):
+    normalized_user_id = user_id
     request.state.audit_resource_id = f"user:{normalized_user_id}"
     user = db.query(User).filter(User.user_id == normalized_user_id).first()
     if not user:
@@ -175,12 +178,12 @@ def unlock_user(user_id: str, request: Request, db: Session = Depends(get_db)):
 
 @router.post("/locked-users/{user_id}/reset-password")
 def admin_reset_password(
-    user_id: str,
+    user_id: Annotated[str, InputPath(min_length=3, max_length=31), AfterValidator(normalize_user_id)],
     data: AdminResetPasswordRequest,
     request: Request,
     db: Session = Depends(get_db),
 ):
-    normalized_user_id = user_id.strip().lower()
+    normalized_user_id = user_id
     request.state.audit_resource_id = f"user:{normalized_user_id}"
     user = db.query(User).filter(User.user_id == normalized_user_id).first()
     if not user:

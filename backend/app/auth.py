@@ -8,13 +8,15 @@ import hmac
 import secrets
 import re
 from datetime import datetime, timedelta, timezone
+from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, Path, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.user import AuthSession, PasswordPolicyConfiguration, User
 from app.config import settings
+from app.schemas.input_validation import normalize_user_id
 
 
 SESSION_COOKIE = "credit_dossier_session"
@@ -64,6 +66,11 @@ def password_policy_checks(
     """Return each configured policy rule and whether the password satisfies it."""
     policy = password_policy(db)
     checks: list[dict[str, object]] = [
+        {
+            "key": "no_whitespace",
+            "label": "No spaces or whitespace",
+            "met": not any(char.isspace() for char in password),
+        },
         {
             "key": "min_length",
             "label": f"At least {policy['min_length']} characters",
@@ -211,9 +218,9 @@ def seed_initial_users(db: Session) -> None:
     )
     changed = False
     for configured_user_id, password, role in accounts:
-        user_id = configured_user_id.strip().lower()
-        if not user_id or not password:
+        if not configured_user_id or not password:
             continue
+        user_id = normalize_user_id(configured_user_id)
         existing = db.query(User).filter(User.user_id == user_id).first()
         if existing:
             # A configured admin ID is an explicit bootstrap instruction. Repair
@@ -291,7 +298,7 @@ def get_current_user(
 
 
 def require_deal_owner(
-    deal_id: str,
+    deal_id: Annotated[str, Path(min_length=1, max_length=128)],
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):

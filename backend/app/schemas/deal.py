@@ -5,7 +5,7 @@ Pydantic schemas for Deal, Section, AuditEntry, and Version.
 import json
 import unicodedata
 from datetime import date, datetime
-from typing import Optional
+from typing import Annotated, Optional
 from urllib.parse import urlsplit
 from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
@@ -65,7 +65,7 @@ class SectionDocumentLinkResponse(BaseModel):
 
 
 class LinkDocumentsRequest(StrictInputModel):
-    document_ids: list[str] = Field(min_length=1, max_length=100)
+    document_ids: list[Annotated[str, Field(min_length=1, max_length=128)]] = Field(min_length=1, max_length=100)
 
 
 # ── Library File (Mistral Library) ─────────────────────────────
@@ -156,7 +156,7 @@ class SectionUpdate(StrictInputModel):
     output_template: Optional[str] = Field(default=None, max_length=100_000)
     generated_content: Optional[str] = Field(default=None, max_length=500_000)
     state: Optional[str] = Field(default=None, pattern=r"^(pending|ready)$")
-    source_urls: Optional[list[str]] = None
+    source_urls: Optional[list[Annotated[str, Field(max_length=2048)]]] = Field(default=None, max_length=10)
 
     @field_validator("sources", "expected_output", "custom_instructions", "output_template", "generated_content")
     @classmethod

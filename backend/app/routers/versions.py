@@ -1,5 +1,8 @@
 """Versions API router — submit, review, and download frozen versions."""
 
+
+from typing import Annotated
+from fastapi import Path as InputPath
 import io
 import json
 
@@ -27,7 +30,7 @@ router = APIRouter(prefix="/api/deals/{deal_id}/versions", tags=["versions"], de
 
 @router.post("", response_model=VersionResponse, status_code=201, response_class=Utf8JSONResponse)
 def submit_version(
-    deal_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     data: VersionCreate,
     response: Response,
     db: Session = Depends(get_db),
@@ -43,8 +46,8 @@ def submit_version(
 
 @router.patch("/{version_id}/approve", response_model=VersionResponse)
 def approve_version(
-    deal_id: str,
-    version_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    version_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     data: VersionReviewRequest | None = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_credit_analyst),
@@ -64,8 +67,8 @@ def approve_version(
 
 @router.post("/{version_id}/download")
 def download_version(
-    deal_id: str,
-    version_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    version_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     db: Session = Depends(get_db),
 ):
     """Download the immutable submitted version as a PDF."""
@@ -140,8 +143,8 @@ def download_version(
 
 @router.patch("/{version_id}/deny", response_model=VersionResponse)
 def deny_version(
-    deal_id: str,
-    version_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    version_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     data: VersionReviewRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_credit_analyst),

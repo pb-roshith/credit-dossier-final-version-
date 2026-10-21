@@ -273,3 +273,50 @@ npm run lint
 ## License
 
 Private repository. All rights reserved.
+
+### HTTPS and HSTS deployment
+
+The frontend server, request gateway, and API return
+`Strict-Transport-Security: max-age=31536000; includeSubDomains`.
+Browsers honor HSTS over HTTPS. Terminate TLS at the deployment gateway, redirect
+public HTTP requests to HTTPS, and preserve this header on HTTPS responses.
+Configure the same header on gateway-generated errors that do not reach the app.
+The existing subdomain policy requires HTTPS on all subdomains; preload is not enabled.
+After deployment, verify the public HTTPS URL (including error and API responses)
+with `curl -I https://<application-host>/login`, then rerun DAST.
+
+### Resource-consumption protection
+
+Start the production frontend with `npm start` so requests pass through the
+request gateway. It caps each peer at 600 requests/minute, 64 active requests,
+128 connections, a 15-second header deadline, and a 60-second body deadline.
+The API independently caps requests per IP at 600/minute, authentication writes
+at 20/minute, and expensive writes at 10/minute, with 32 active requests and
+4 active expensive requests per worker. Requests exceeding rate limits receive
+429 plus Retry-After; exhausted processing capacity returns 503.
+
+Bodies are limited to 2 MiB for ordinary requests and 52 MiB total for multipart
+uploads (the existing individual file limit remains 50 MiB). Actual streamed
+bytes are checked even without Content-Length. API uploads spool beyond 1 MiB
+to temporary disk. Bodies time out after 60 seconds; asynchronous request
+processing and background response tasks have a 300-second deadline. Draft All
+also caps active jobs at 4 and retained job records at 100, pruning completed
+records after one hour when new jobs are admitted.
+
+Configure API thresholds using backend/.env.example. Proxy headers are ignored
+unless RESOURCE_TRUSTED_PROXY_IPS names the immediate proxy, and that proxy must
+overwrite X-Forwarded-For. The bundled production gateway does so. Keep the API
+and internal frontend port private. Without trusted proxy configuration, clients
+behind the same proxy share its API quota. Do not trust arbitrary forwarded IPs.
+
+These counters are per process. Production deployments with multiple workers or
+instances need a shared rate limiter at the ingress/WAF and DDoS protection at
+the hosting provider. Set equivalent limits on direct/static hosting paths;
+Vite development mode does not use the production request gateway. Async
+timeouts do not forcibly stop already-running synchronous threads or external
+jobs; use worker/process isolation and provider timeouts for hard CPU/memory
+budgets. Monitor 408/413/429/503/504 responses, latency, CPU, memory, temporary
+disk, and generation queue depth. Create infrastructure alerts for sustained
+rejections or resource spikes. Resource-limit warning logs are sampled to one
+per reason per minute. Hosting/WAF rules and alert provisioning must be applied
+in the deployment environment; they are not configured by this repository.

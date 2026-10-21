@@ -60,6 +60,10 @@ function ProfilePage() {
     event.preventDefault();
     setMessage(null);
     setError(null);
+    if ([currentPassword, newPassword, confirmPassword].some((value) => /\s/.test(value))) {
+      setError("Passwords cannot contain spaces.");
+      return;
+    }
     if (newPassword !== confirmPassword) {
       setError("New password and confirm password must match.");
       return;
@@ -173,9 +177,14 @@ function ProfilePage() {
                       : Math.min(31, configuration?.password_policy.max_length ?? 31)
                   }
                   value={value as string}
-                  onChange={(event) =>
-                    (setter as React.Dispatch<React.SetStateAction<string>>)(event.target.value)
-                  }
+                  onChange={(event) => {
+                    if (/\s/.test(event.target.value)) {
+                      setError("Passwords cannot contain spaces.");
+                      return;
+                    }
+                    setError(null);
+                    (setter as React.Dispatch<React.SetStateAction<string>>)(event.target.value);
+                  }}
                   onCopy={blockClipboard}
                   onCut={blockClipboard}
                   onPaste={blockClipboard}
@@ -247,7 +256,14 @@ function ProfilePage() {
               type="password"
               autoComplete="off"
               value={securityPassword}
-              onChange={(event) => setSecurityPassword(event.target.value)}
+              onChange={(event) => {
+                if (/\s/.test(event.target.value)) {
+                  setQuestionError("Passwords cannot contain spaces.");
+                  return;
+                }
+                setQuestionError(null);
+                setSecurityPassword(event.target.value);
+              }}
               className="h-10 w-full rounded-md border border-input bg-background px-3 font-normal outline-none focus:ring-2 focus:ring-ring"
             />
           </label>

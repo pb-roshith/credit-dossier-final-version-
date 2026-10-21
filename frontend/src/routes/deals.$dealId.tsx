@@ -1,3 +1,4 @@
+import { safeMarkdownOptions } from "@/lib/markdown-security";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, useCallback } from "react";
 import {
@@ -46,7 +47,7 @@ import {
 import { diffWords } from "diff";
 import { useAuth } from "@/lib/auth";
 import { apiErrorFromResponse } from "@/lib/api-error";
-import { textInputError, sourceUrlError } from "@/lib/input-validation";
+import { textInputError, sourceUrlError, uploadSizeError } from "@/lib/input-validation";
 
 function validateTextInput(label: string, value: string, maxLength: number): boolean {
   const error = textInputError(label, value, maxLength);
@@ -617,6 +618,8 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
     if (!active || uploadingTemplate) return;
     const fileInput = document.getElementById("template-file-input") as HTMLInputElement;
     if (!fileInput?.files?.[0]) return;
+    const sizeError = uploadSizeError(fileInput.files[0], 5);
+    if (sizeError) { alert(sizeError); fileInput.value = ""; return; }
     setUploadingTemplate(true);
     try {
       const formData = new FormData();
@@ -626,6 +629,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       refresh();
     } catch (err) {
       console.error("Template upload failed:", err);
+      alert(err instanceof Error ? err.message : "Template upload failed.");
     } finally {
       setUploadingTemplate(false);
     }
@@ -1018,7 +1022,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
                   Data Sources
                 </div>
-                <textarea
+                <textarea maxLength={20000}
                   value={dataSources}
                   onChange={(event) => setDataSources(event.target.value)}
                   rows={3}
@@ -1029,7 +1033,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">
                   Expected Output
                 </div>
-                <textarea
+                <textarea maxLength={20000}
                   value={expected}
                   onChange={(event) => setExpected(event.target.value)}
                   rows={3}
@@ -1076,7 +1080,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
             </p>
             {sourceUrls.map((url, index) => (
               <div key={index} className="flex items-center gap-2">
-                <input
+                <input maxLength={2048}
                   type="url"
                   value={url}
                   onChange={(event) => {
@@ -1174,7 +1178,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
             </span>
           </div>
           <div className="p-4">
-            <textarea
+            <textarea maxLength={50000}
               value={customInstructions}
               onChange={(e) => setCustomInstructions(e.target.value)}
               rows={3}
@@ -1260,7 +1264,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               <label className="text-xs font-medium text-muted-foreground block mb-1.5">
                 Paste or edit markdown template
               </label>
-              <textarea
+              <textarea maxLength={100000}
                 value={outputTemplate}
                 onChange={(e) => setOutputTemplate(e.target.value)}
                 rows={4}
@@ -1793,7 +1797,7 @@ function NarrativesTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               <div className="narrative-prose px-6 py-5">
                 {editingContent ? (
                   <div className="space-y-3">
-                    <textarea
+                    <textarea maxLength={500000}
                       value={editedContent}
                       onChange={(e) => setEditedContent(e.target.value)}
                       rows={15}
@@ -2495,7 +2499,7 @@ function MarkdownRenderer({
   return (
     <ReactMarkdown
       remarkPlugins={remarkGfm ? [remarkGfm] : []}
-      skipHtml
+      {...safeMarkdownOptions}
       components={{
         table: (props: any) => (
           <CustomTable {...props} primaryColor={primaryColor} secondaryColor={secondaryColor} />
@@ -2717,7 +2721,7 @@ function VersionsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
             <span>Submit for Review</span>
           </div>
           <div className="space-y-3 p-4">
-            <textarea
+            <textarea maxLength={4000}
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               rows={3}
@@ -2887,6 +2891,8 @@ function ExportTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
   const handleExtractTheme = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const sizeError = uploadSizeError(file);
+    if (sizeError) { alert(sizeError); e.target.value = ""; return; }
     setExtractingTheme(true);
     try {
       const formData = new FormData();
@@ -2901,7 +2907,7 @@ function ExportTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       refresh();
     } catch (err) {
       console.error("Theme extraction failed:", err);
-      alert("Failed to extract theme. Try a different file.");
+      alert(err instanceof Error ? err.message : "Failed to extract theme. Try a different file.");
     } finally {
       setExtractingTheme(false);
       e.target.value = "";
@@ -3106,6 +3112,8 @@ function DocumentsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       if (libUploadType === "file") {
         const fileInput = document.getElementById("lib-file-input") as HTMLInputElement;
         if (!fileInput?.files?.[0]) return;
+        const sizeError = uploadSizeError(fileInput.files[0]);
+        if (sizeError) { alert(sizeError); return; }
         formData.append("file", fileInput.files[0]);
       } else if (libUploadType === "url") {
         formData.append("url", libUrlInput);
@@ -3123,6 +3131,7 @@ function DocumentsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
       refresh();
     } catch (err) {
       console.error("Library upload failed:", err);
+      alert(err instanceof Error ? err.message : "Library upload failed.");
     } finally {
       setLibUploading(false);
     }
@@ -3353,7 +3362,12 @@ function DocumentsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                     id="lib-file-input"
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                     accept=".pdf,.docx,.doc,.xlsx,.xls,.pptx,.csv,.txt,.md,.json"
-                    onChange={(e) => setLibSelectedFileName(e.target.files?.[0]?.name || "")}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      const error = file ? uploadSizeError(file) : null;
+                      if (error) { alert(error); e.target.value = ""; setLibSelectedFileName(""); return; }
+                      setLibSelectedFileName(file?.name || "");
+                    }}
                   />
                   <FileIcon
                     className={`h-8 w-8 mx-auto mb-3 ${libSelectedFileName ? "text-primary" : "text-muted-foreground/60"}`}
@@ -3375,7 +3389,7 @@ function DocumentsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                 </div>
               )}
               {libUploadType === "url" && (
-                <input
+                <input maxLength={2048}
                   placeholder="https://example.com/document.pdf"
                   value={libUrlInput}
                   onChange={(e) => setLibUrlInput(e.target.value)}
@@ -3383,7 +3397,7 @@ function DocumentsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
                 />
               )}
               {libUploadType === "text" && (
-                <textarea
+                <textarea maxLength={500000}
                   placeholder="Paste document content here…"
                   value={libTextInput}
                   onChange={(e) => setLibTextInput(e.target.value)}
@@ -3393,7 +3407,7 @@ function DocumentsTab({ deal, refresh }: { deal: Deal; refresh: () => void }) {
               )}
 
               <div className="flex gap-2">
-                <input
+                <input maxLength={4000}
                   placeholder="Note (optional)"
                   value={libUploadNote}
                   onChange={(e) => setLibUploadNote(e.target.value)}

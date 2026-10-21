@@ -22,11 +22,5 @@ export async function apiErrorFromResponse(
 ): Promise<ApiError> {
   const body = (await response.json().catch(() => null)) as ApiErrorEnvelope | null;
   const detail = typeof body?.detail === "string" ? body.detail : fallback;
-  const identifiers = [
-    body?.error_code,
-    body?.event_id ? `Reference: ${body.event_id}` : null,
-  ].filter(Boolean);
-  const message = identifiers.length > 0 ? `${detail} (${identifiers.join("; ")})` : detail;
-
-  return new ApiError(message, response.status, body?.error_code, body?.event_id);
+  return new ApiError(detail, response.status, body?.error_code, body?.event_id);
 }

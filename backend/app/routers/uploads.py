@@ -2,11 +2,16 @@
 Uploads API router — file, URL, and text upload for section grounding.
 """
 
+
+from typing import Annotated
+from fastapi import Path as InputPath
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 
+from pydantic import AfterValidator
+from app.schemas.input_validation import validate_markdown_text, validate_source_url
 from app.database import get_db
 from app.schemas.upload import UploadResponse
 from app.services.ingestion_service import IngestionService
@@ -15,7 +20,7 @@ from app.auth import get_current_user, require_deal_owner
 from app.models.deal import Deal, Section
 from app.models.upload import Upload
 from app.models.user import User
-from app.file_validation import UploadValidationError, validate_uploaded_file
+from app.file_validation import read_uploaded_file, UploadValidationError, validate_uploaded_file
 
 router = APIRouter(tags=["uploads"])
 
@@ -27,13 +32,13 @@ router = APIRouter(tags=["uploads"])
     dependencies=[Depends(require_deal_owner)],
 )
 async def create_upload(
-    deal_id: str,
-    section_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    section_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     source_type: Literal["file", "url", "text"] = Form(...),
     file: UploadFile | None = File(None),
-    url: str | None = Form(None, max_length=2048),
-    text_content: str | None = Form(None, max_length=500_000),
-    note: str | None = Form(None, max_length=4000),
+    url: Annotated[str | None, Form(max_length=2048), AfterValidator(validate_source_url)] = None,
+    text_content: Annotated[str | None, Form(max_length=500_000), AfterValidator(validate_markdown_text)] = None,
+    note: Annotated[str | None, Form(max_length=4000), AfterValidator(validate_markdown_text)] = None,
     db: Session = Depends(get_db),
 ):
     """
@@ -56,7 +61,7 @@ async def create_upload(
     if source_type == "file":
         if not file:
             raise HTTPException(status_code=400, detail="File is required for source_type='file'")
-        file_bytes = await file.read()
+        file_bytes = await read_uploaded_file(file)
         try:
             filename = validate_uploaded_file(file.filename, file_bytes)
         except UploadValidationError as exc:
@@ -83,7 +88,7 @@ async def create_upload(
     response_model=list[UploadResponse],
     dependencies=[Depends(require_deal_owner)],
 )
-def list_uploads(deal_id: str, section_id: str, db: Session = Depends(get_db)):
+def list_uploads(deal_id: Annotated[str, InputPath(min_length=1, max_length=128)], section_id: Annotated[str, InputPath(min_length=1, max_length=128)], db: Session = Depends(get_db)):
     """List all uploads for a section."""
     section = db.query(Section).filter(
         Section.id == section_id,
@@ -96,7 +101,7 @@ def list_uploads(deal_id: str, section_id: str, db: Session = Depends(get_db)):
 
 @router.delete("/api/uploads/{upload_id}", status_code=204)
 def delete_upload(
-    upload_id: str,
+    upload_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

@@ -176,6 +176,18 @@ app.add_middleware(
 )
 
 # ── Mount routers ───────────────────────────────────────────────
+from app.resource_limits import ResourceLimitMiddleware, ResourceLimits
+app.add_middleware(ResourceLimitMiddleware, limits=ResourceLimits(
+    requests_per_minute=settings.RATE_LIMIT_PER_MINUTE,
+    auth_per_minute=settings.AUTH_RATE_LIMIT_PER_MINUTE,
+    expensive_per_minute=settings.EXPENSIVE_RATE_LIMIT_PER_MINUTE,
+    concurrent_requests=settings.MAX_CONCURRENT_REQUESTS,
+    concurrent_expensive=settings.MAX_CONCURRENT_EXPENSIVE_REQUESTS,
+    read_seconds=settings.REQUEST_READ_TIMEOUT_SECONDS,
+    processing_seconds=settings.REQUEST_PROCESSING_TIMEOUT_SECONDS,
+    trusted_proxies=tuple(ip.strip() for ip in settings.RESOURCE_TRUSTED_PROXY_IPS.split(",") if ip.strip()),
+))
+
 authenticated = [Depends(get_current_user)]
 app.include_router(auth_router)
 app.include_router(admin_router)

@@ -2,8 +2,13 @@
 Sections API router — section management, narrative generation, and template management.
 """
 
+
+from typing import Annotated
+from fastapi import Path as InputPath
 import os
+import asyncio
 import threading
+from time import monotonic
 import uuid
 from pathlib import Path
 from typing import Any
@@ -107,6 +112,10 @@ async def _run_draft_all_job(job_id: str, deal_id: str) -> None:
         await NarrativeService.draft_all(db, deal_id, report)
         with _draft_all_jobs_lock:
             _draft_all_jobs[job_id]["status"] = "completed"
+    except asyncio.CancelledError:
+        with _draft_all_jobs_lock:
+            _draft_all_jobs[job_id].update(status="failed", error="Generation timed out or was interrupted.")
+        raise
     except SQLAlchemyError:
         db.rollback()
         logger.exception("Database failure in Draft All job %s", job_id)
@@ -127,7 +136,7 @@ async def _run_draft_all_job(job_id: str, deal_id: str) -> None:
 
 
 @router.get("", response_model=list[SectionResponse])
-def list_sections(deal_id: str, db: Session = Depends(get_db)):
+def list_sections(deal_id: Annotated[str, InputPath(min_length=1, max_length=128)], db: Session = Depends(get_db)):
     """List all sections for a deal."""
     deal = DealService.get_deal(db, deal_id)
     if not deal:
@@ -137,8 +146,8 @@ def list_sections(deal_id: str, db: Session = Depends(get_db)):
 
 @router.patch("/{section_id}", response_model=SectionResponse, response_class=Utf8JSONResponse)
 async def update_section(
-    deal_id: str,
-    section_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    section_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     data: SectionUpdate,
     response: Response,
     db: Session = Depends(get_db),
@@ -201,8 +210,8 @@ async def update_section(
 
 @router.post("/{section_id}/edit-lock", response_model=NarrativeEditLockResponse, response_class=Utf8JSONResponse)
 def acquire_narrative_edit_lock(
-    deal_id: str,
-    section_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    section_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     response: Response,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -219,8 +228,8 @@ def acquire_narrative_edit_lock(
 
 @router.delete("/{section_id}/edit-lock", status_code=204)
 def release_narrative_edit_lock(
-    deal_id: str,
-    section_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    section_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -233,8 +242,8 @@ def release_narrative_edit_lock(
     response_class=Utf8JSONResponse,
 )
 def list_narrative_versions(
-    deal_id: str,
-    section_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    section_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     response: Response,
     db: Session = Depends(get_db),
 ):
@@ -251,9 +260,9 @@ def list_narrative_versions(
     response_model=NarrativeVersionResponse,
 )
 def mark_narrative_version_final(
-    deal_id: str,
-    section_id: str,
-    version_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    section_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    version_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     db: Session = Depends(get_db),
 ):
     """Make one saved version the only final narrative for this section."""
@@ -270,9 +279,9 @@ def mark_narrative_version_final(
 
 @router.delete("/{section_id}/versions/{version_id}")
 def delete_narrative_version(
-    deal_id: str,
-    section_id: str,
-    version_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    section_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    version_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     db: Session = Depends(get_db),
 ):
     """Delete one narrative version and recalculate the effective final draft."""
@@ -289,8 +298,8 @@ def delete_narrative_version(
 
 @router.post("/{section_id}/generate", response_model=NarrativeResponse)
 async def generate_narrative(
-    deal_id: str,
-    section_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    section_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     body: NarrativeRequest | None = None,
     db: Session = Depends(get_db),
 ):
@@ -348,7 +357,7 @@ async def generate_narrative(
     status_code=202,
 )
 def start_draft_all_job(
-    deal_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
@@ -364,6 +373,12 @@ def start_draft_all_job(
             detail="Library sync is still in progress.",
         )
     with _draft_all_jobs_lock:
+        now = monotonic()
+        completed_ids = [key for key, job in _draft_all_jobs.items()
+                         if job["status"] not in {"queued", "running"}]
+        for key in completed_ids:
+            if now - _draft_all_jobs[key].get("created_monotonic", 0) > 3600 or len(_draft_all_jobs) >= 100:
+                del _draft_all_jobs[key]
         existing = next(
             (
                 job
@@ -376,9 +391,12 @@ def start_draft_all_job(
         if existing:
             job_id = existing["job_id"]
         else:
+            if sum(job["status"] in {"queued", "running"} for job in _draft_all_jobs.values()) >= 4 or len(_draft_all_jobs) >= 100:
+                raise HTTPException(status_code=503, detail="Generation capacity is busy. Try again later.", headers={"Retry-After": "30"})
             job_id = "draft_" + uuid.uuid4().hex[:12]
             _draft_all_jobs[job_id] = {
                 "job_id": job_id,
+                "created_monotonic": monotonic(),
                 "deal_id": deal_id,
                 "status": "queued",
                 "percent": 0,
@@ -407,7 +425,7 @@ def start_draft_all_job(
     "/generate-all/jobs/{job_id}",
     response_model=DraftAllJobResponse,
 )
-def get_draft_all_job(deal_id: str, job_id: str):
+def get_draft_all_job(deal_id: Annotated[str, InputPath(min_length=1, max_length=128)], job_id: Annotated[str, InputPath(min_length=1, max_length=128)]):
     """Return current per-section Draft All progress."""
     snapshot = _draft_job_snapshot(job_id)
     if not snapshot or snapshot["deal_id"] != deal_id:
@@ -416,7 +434,7 @@ def get_draft_all_job(deal_id: str, job_id: str):
 
 
 @router.post("/generate-all", response_model=DraftAllResponse)
-async def draft_all_sections(deal_id: str, db: Session = Depends(get_db)):
+async def draft_all_sections(deal_id: Annotated[str, InputPath(min_length=1, max_length=128)], db: Session = Depends(get_db)):
     """
     Generate narratives for ALL sections in parallel.
     Each section has its own dedicated Mistral agent.
@@ -464,8 +482,8 @@ async def draft_all_sections(deal_id: str, db: Session = Depends(get_db)):
 
 @router.post("/{section_id}/moderate")
 async def moderate_section(
-    deal_id: str,
-    section_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    section_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     db: Session = Depends(get_db),
 ):
     """
@@ -520,8 +538,8 @@ SUPPORTED_TEMPLATE_EXTENSIONS = TEMPLATE_EXTENSIONS
 
 @router.post("/{section_id}/template", response_model=SectionResponse)
 async def upload_template(
-    deal_id: str,
-    section_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    section_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
@@ -583,8 +601,8 @@ async def upload_template(
 
 @router.delete("/{section_id}/template", response_model=SectionResponse, response_class=Utf8JSONResponse)
 def delete_template(
-    deal_id: str,
-    section_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    section_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     response: Response,
     db: Session = Depends(get_db),
 ):

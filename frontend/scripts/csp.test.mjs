@@ -8,6 +8,7 @@ test("production SSR uses fresh CSP nonces for every script", async () => {
   const policy = first.headers.get("content-security-policy");
   const nonce = policy?.match(/'nonce-([a-f0-9]{64})'/)?.[1];
   assert.equal(first.status, 200);
+  assert.equal(first.headers.get("strict-transport-security"), "max-age=31536000; includeSubDomains");
   assert.ok(nonce);
   assert.ok(!policy.split("script-src ")[1].split(";")[0].includes("unsafe-inline"));
   assert.ok(!policy.includes("unsafe-eval"));

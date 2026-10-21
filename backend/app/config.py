@@ -4,7 +4,7 @@ PostgreSQL is the only supported application database.
 """
 
 from pathlib import Path
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.secret_provider import load_runtime_secrets
@@ -36,6 +36,14 @@ class Settings(BaseSettings):
 
     # ── Application ─────────────────────────────────────────────
     APP_ENV: str = "development"
+    RATE_LIMIT_PER_MINUTE: int = Field(default=600, ge=1, le=100000)
+    AUTH_RATE_LIMIT_PER_MINUTE: int = Field(default=20, ge=1, le=10000)
+    EXPENSIVE_RATE_LIMIT_PER_MINUTE: int = Field(default=10, ge=1, le=10000)
+    MAX_CONCURRENT_REQUESTS: int = Field(default=32, ge=1, le=1024)
+    MAX_CONCURRENT_EXPENSIVE_REQUESTS: int = Field(default=4, ge=1, le=128)
+    REQUEST_READ_TIMEOUT_SECONDS: int = Field(default=60, ge=1, le=600)
+    REQUEST_PROCESSING_TIMEOUT_SECONDS: int = Field(default=300, ge=1, le=1800)
+    RESOURCE_TRUSTED_PROXY_IPS: str = ""
     UPLOAD_DIR: str = "./uploads"
     CORS_ALLOWED_ORIGINS: str = (
         "http://localhost:8080|http://localhost:5173|http://localhost:3000|"

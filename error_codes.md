@@ -18,6 +18,8 @@ internal exception, SQL, source-path, stack-trace, or upstream-response details.
 |---|---:|---|---|
 | `REQ-001` | 422 | The request contains invalid data. | Request schema validation failed. |
 | `REQ-002` | 400 | The request could not be processed. | Generic invalid request. |
+| `FILE-002` | 413 | Files cannot exceed 50 MB. | Uploaded file exceeds 50 x 1024 x 1024 bytes. Templates retain their stricter 5 MB limit. |
+| `FILE-003` | 400 | Template files cannot exceed 5 MB. Please choose a smaller file. | Uploaded template exceeds 5 x 1024 x 1024 bytes. |
 | `AUTH-001` | 401 | Invalid user ID or password. | Credential verification failed. |
 | `AUTH-002` | 403 | Your account is in the admin queue for approval. | Account approval is pending. |
 | `AUTH-003` | 401 | Please sign in to continue. | No valid session was supplied. |

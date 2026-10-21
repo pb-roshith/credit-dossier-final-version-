@@ -48,6 +48,7 @@ function withBrowserSecurityHeaders(response: Response): Response {
   if (!headers.has("Content-Security-Policy")) {
     headers.set("Content-Security-Policy", browserContentSecurityPolicy());
   }
+  headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
   headers.set("X-Frame-Options", "DENY");
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "no-referrer");

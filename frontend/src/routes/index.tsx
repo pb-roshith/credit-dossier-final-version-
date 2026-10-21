@@ -117,7 +117,7 @@ function Dashboard() {
           <div className="hidden items-center gap-2 sm:flex">
             <div className="relative">
               <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-primary-foreground/70" />
-              <input
+              <input maxLength={256}
                 value={q} onChange={e => setQ(e.target.value)}
                 className="h-7 w-44 rounded-md border border-primary-foreground/30 bg-primary-foreground/10 pl-7 pr-2 text-xs text-primary-foreground placeholder:text-primary-foreground/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 placeholder="Search…"

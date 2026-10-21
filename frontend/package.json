@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "node scripts/start.mjs",
+    "test:resource-limits": "node --test scripts/resource-limits.test.mjs",
+    "test:security-headers": "node --test scripts/security-headers.test.mjs",
+    "test:xss": "node --test scripts/xss.test.mjs",
     "test:csp": "node --test scripts/csp.test.mjs",
     "test:request-security": "node --test scripts/request-gateway.test.mjs scripts/admin-access.test.mjs scripts/login-path.test.mjs",
     "dev": "vite dev",

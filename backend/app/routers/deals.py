@@ -2,6 +2,9 @@
 Deals API router — CRUD operations for deals.
 """
 
+
+from typing import Annotated
+from fastapi import Path as InputPath
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, Response
 from sqlalchemy.orm import Session
 import pypdf
@@ -19,7 +22,7 @@ from app.services.library_sync_service import LibrarySyncService
 from app.auth import get_current_user, require_deal_owner, require_relationship_manager
 from app.models.user import User
 from app.responses import Utf8JSONResponse
-from app.file_validation import THEME_EXTENSIONS, UploadValidationError, validate_uploaded_file
+from app.file_validation import read_uploaded_file, THEME_EXTENSIONS, UploadValidationError, validate_uploaded_file
 import httpx
 import logging
 
@@ -110,7 +113,7 @@ def _list_deals(
 
 
 @router.get("/{deal_id}", response_model=DealResponse, response_class=Utf8JSONResponse, dependencies=[Depends(require_deal_owner)])
-def get_deal(deal_id: str, background_tasks: BackgroundTasks, response: Response, db: Session = Depends(get_db)):
+def get_deal(deal_id: Annotated[str, InputPath(min_length=1, max_length=128)], background_tasks: BackgroundTasks, response: Response, db: Session = Depends(get_db)):
     """Get a single deal with all sections, audit entries, and versions."""
     response.headers["Cache-Control"] = "no-store"
     deal = DealService.get_deal(db, deal_id)
@@ -126,7 +129,7 @@ def get_deal(deal_id: str, background_tasks: BackgroundTasks, response: Response
 
 
 @router.post("/{deal_id}/library/sync", status_code=202, dependencies=[Depends(require_deal_owner)])
-def sync_mcp_documents(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def sync_mcp_documents(deal_id: Annotated[str, InputPath(min_length=1, max_length=128)], background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Refresh direct references to the company's Mistral Library."""
     deal = DealService.get_deal(db, deal_id)
     if not deal:
@@ -136,7 +139,7 @@ def sync_mcp_documents(deal_id: str, background_tasks: BackgroundTasks, db: Sess
     return {"message": "Company library refresh started", "status": "syncing"}
 
 @router.get("/{deal_id}/library/sync-status", dependencies=[Depends(require_deal_owner)])
-def get_library_sync_status(deal_id: str, db: Session = Depends(get_db)):
+def get_library_sync_status(deal_id: Annotated[str, InputPath(min_length=1, max_length=128)], db: Session = Depends(get_db)):
     """Get the current sync status and timeline of logs."""
     deal = DealService.get_deal(db, deal_id)
     if not deal:
@@ -176,7 +179,7 @@ def create_deal(data: DealCreate, background_tasks: BackgroundTasks, db: Session
 
 
 @router.patch("/{deal_id}", response_model=DealResponse, dependencies=[Depends(require_deal_owner)])
-def update_deal(deal_id: str, data: DealUpdate, db: Session = Depends(get_db)):
+def update_deal(deal_id: Annotated[str, InputPath(min_length=1, max_length=128)], data: DealUpdate, db: Session = Depends(get_db)):
     """Update deal metadata."""
     deal = DealService.update_deal(db, deal_id, data.model_dump(exclude_unset=True))
     if not deal:
@@ -186,13 +189,13 @@ def update_deal(deal_id: str, data: DealUpdate, db: Session = Depends(get_db)):
 
 
 @router.post("/{deal_id}/theme/extract", response_model=DealResponse, dependencies=[Depends(require_deal_owner)])
-async def extract_theme_from_document(deal_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def extract_theme_from_document(deal_id: Annotated[str, InputPath(min_length=1, max_length=128)], file: UploadFile = File(...), db: Session = Depends(get_db)):
     """Upload a document (like an Annual Report) to extract and apply the brand theme."""
     deal = DealService.get_deal(db, deal_id)
     if not deal:
         raise HTTPException(status_code=404, detail="Deal not found")
 
-    content = await file.read()
+    content = await read_uploaded_file(file)
     try:
         filename = validate_uploaded_file(
             file.filename, content, allowed_extensions=THEME_EXTENSIONS
@@ -237,7 +240,7 @@ async def extract_theme_from_document(deal_id: str, file: UploadFile = File(...)
 
 
 @router.delete("/{deal_id}", status_code=204, dependencies=[Depends(require_deal_owner)])
-def delete_deal(deal_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def delete_deal(deal_id: Annotated[str, InputPath(min_length=1, max_length=128)], background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Delete a deal and all related data, including the Mistral library."""
     deal = DealService.get_deal(db, deal_id)
     if not deal:

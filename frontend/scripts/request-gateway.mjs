@@ -13,9 +13,38 @@ export function isSafeRequestTarget(target) {
   return false;
 }
 
-export function createRequestGateway(upstreamPort) {
+export function createRequestGateway(upstreamPort, { requestsPerMinute = 600, maxConcurrent = 64, maxClients = 10000 } = {}) {
+  const clients = new Map();
+  let active = 0;
   const server = createServer({ insecureHTTPParser: false }, async (req, res) => {
+    // Default for gateway errors and static/API responses. SSR replaces this
+    // header with its per-response nonce policy when upstream headers arrive.
+    res.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'none'; script-src-attr 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'");
+    res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+    const reject = (status, message) => {
+      res.writeHead(status, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "Connection": "close", ...([429, 503].includes(status) ? { "Retry-After": "60" } : {}) });
+      res.end(message + "\n");
+    };
+    const now = Date.now();
+    for (const [key, value] of clients) {
+      if (value.expires > now) break;
+      clients.delete(key);
+    }
+    const peer = req.socket.remoteAddress ?? "unknown";
+    if (!clients.has(peer)) {
+      if (clients.size >= maxClients) return reject(503, "Server is busy");
+      clients.set(peer, { expires: now + 60000, count: 0 });
+    }
+    if (++clients.get(peer).count > requestsPerMinute) return reject(429, "Too many requests");
+    if (active >= maxConcurrent) return reject(503, "Server is busy");
+    const bodyLimit = (req.headers["content-type"] ?? "").toLowerCase().startsWith("multipart/form-data") ? 52 * 1024 * 1024 : 2 * 1024 * 1024;
+    if (Number(req.headers["content-length"] ?? 0) > bodyLimit) return reject(413, "Request body is too large");
+    active++;
+    let released = false;
+    const release = () => { if (!released) { released = true; active--; } };
+    res.once("finish", release);
+    res.once("close", release);
     if (!isSafeRequestTarget(req.url ?? "")) {
       res.writeHead(400, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "Connection": "close", "X-Content-Type-Options": "nosniff" });
       res.end("Bad Request\n");
@@ -66,19 +95,39 @@ export function createRequestGateway(upstreamPort) {
       }
       res.setHeader("Cache-Control", "no-store");
     }
-    const upstream = httpRequest({ hostname: "127.0.0.1", port: upstreamPort, method: req.method, path: req.url, headers: req.headers, insecureHTTPParser: false }, (response) => {
+    const upstream = httpRequest({ hostname: "127.0.0.1", port: upstreamPort, method: req.method, path: req.url, headers: { ...req.headers, "x-forwarded-for": peer }, insecureHTTPParser: false }, (response) => {
       const responseHeaders = { ...response.headers };
       for (const header of ["server", "x-powered-by", "x-aspnet-version", "x-aspnetmvc-version"]) {
         delete responseHeaders[header];
       }
-      res.writeHead(response.statusCode ?? 502, { ...responseHeaders, ...(isProtectedPath ? { "cache-control": "no-store" } : {}), "strict-transport-security": "max-age=31536000; includeSubDomains" });
+      res.writeHead(response.statusCode ?? 502, { ...responseHeaders, ...(isProtectedPath ? { "cache-control": "no-store" } : {}), "strict-transport-security": "max-age=31536000; includeSubDomains", "x-content-type-options": "nosniff" });
       response.on("error", () => res.destroy());
       response.pipe(res);
     });
+    let oversized = false;
+    let bytes = 0;
+    req.on("data", (chunk) => {
+      bytes += chunk.length;
+      if (bytes > bodyLimit && !oversized) {
+        oversized = true;
+        req.unpipe(upstream);
+        upstream.destroy();
+        if (!res.headersSent) reject(413, "Request body is too large");
+        else res.destroy();
+      }
+    });
+    const deadline = setTimeout(() => {
+      upstream.destroy();
+      if (!res.headersSent) reject(504, "Request timed out");
+      else res.destroy();
+    }, 300000);
+    res.once("close", () => clearTimeout(deadline));
+    res.once("finish", () => clearTimeout(deadline));
     upstream.on("error", () => {
+      if (oversized || res.writableEnded) return;
       if (res.headersSent) res.destroy();
       else {
-        res.writeHead(502, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
+        res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
         res.end("Service unavailable\n");
       }
     });
@@ -86,8 +135,13 @@ export function createRequestGateway(upstreamPort) {
     res.on("close", () => { if (!res.writableFinished) upstream.destroy(); });
     req.pipe(upstream);
   });
+  server.headersTimeout = 15000;
+  server.requestTimeout = 60000;
+  server.keepAliveTimeout = 5000;
+  server.maxConnections = 128;
+  server.maxRequestsPerSocket = 1000;
   server.on("clientError", (_, socket) => {
-    if (socket.writable && !socket.destroyed) socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nCache-Control: no-store\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nContent-Length: 0\r\n\r\n");
+    if (socket.writable && !socket.destroyed) socket.end("HTTP/1.1 400 Bad Request\r\nX-Content-Type-Options: nosniff\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; script-src 'none'; script-src-attr 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'\r\nStrict-Transport-Security: max-age=31536000; includeSubDomains\r\nContent-Length: 0\r\n\r\n");
   });
   return server;
 }

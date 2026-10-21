@@ -24,6 +24,9 @@ test("reject malformed paths before forwarding; preserve valid requests", async 
     let body = "";
     for await (const data of req) body += data;
     res.setHeader("Content-Type", "application/json");
+    if (req.url === "/nonce-page") {
+      res.setHeader("Content-Security-Policy", "script-src 'nonce-test' 'strict-dynamic'");
+    }
     res.setHeader("Set-Cookie", ["a=1; HttpOnly", "b=2; HttpOnly"]);
     res.end(JSON.stringify({ url: req.url, method: req.method, cookie: req.headers.cookie, body }));
   });
@@ -40,18 +43,27 @@ test("reject malformed paths before forwarding; preserve valid requests", async 
     targets.push("/assets/x\x7fy.js");
     for (const target of targets) {
       const response = await rawRequest(port, target);
+      assert.match(response, /x-content-type-options: nosniff/i);
+      assert.match(response, /content-security-policy: default-src 'none'; script-src 'none';/i);
       assert.match(response, /^HTTP\/1\.1 400 /, JSON.stringify(target));
       assert.match(response, /strict-transport-security: max-age=31536000; includeSubDomains/i);
     }
     assert.equal(forwarded, 0);
     for (const target of [base, "/assets/jsx-runtime-D3jfb0Ew.js", "/login", "/api/health", "/assets/caf%C3%A9.js", "/api/search?q=hello%20world"]) {
       const result = await rawRequest(port, target);
+      assert.match(result, /x-content-type-options: nosniff/i);
+      assert.match(result, /content-security-policy: default-src 'none'; script-src 'none';/i);
       assert.match(result, /^HTTP\/1\.1 200 /);
       assert.match(result, /strict-transport-security: max-age=31536000; includeSubDomains/i);
     }
     const response = await fetch(`http://127.0.0.1:${port}/api/deals`, { method: "POST", headers: { Cookie: "session=test", "Content-Type": "application/json" }, body: '{"name":"Example"}' });
     assert.deepEqual(await response.json(), { url: "/api/deals", method: "POST", cookie: "session=test", body: '{"name":"Example"}' });
     assert.equal(response.headers.getSetCookie().length, 2);
+    assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(response.headers.get("content-type"), "application/json");
+    const noncePage = await fetch(`http://127.0.0.1:${port}/nonce-page`);
+    assert.equal(noncePage.headers.get("content-security-policy"), "script-src 'nonce-test' 'strict-dynamic'");
+    await noncePage.text();
     assert.equal(response.headers.get("strict-transport-security"), "max-age=31536000; includeSubDomains");
   } finally {
     gateway.closeAllConnections();

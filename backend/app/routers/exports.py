@@ -3,6 +3,9 @@ Exports API router — generate and download PPT, PDF, DOCX documents.
 Also provides the combined report generation endpoint.
 """
 
+
+from typing import Annotated
+from fastapi import Path as InputPath
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -41,8 +44,8 @@ import inspect
 
 @router.post("/export/{format}")
 async def export_deal(
-    deal_id: str,
-    format: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
+    format: Annotated[str, InputPath(min_length=1, max_length=8)],
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -93,7 +96,7 @@ async def export_deal(
 
 @router.post("/report")
 def generate_combined_report(
-    deal_id: str,
+    deal_id: Annotated[str, InputPath(min_length=1, max_length=128)],
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

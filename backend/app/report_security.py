@@ -23,5 +23,5 @@ def secure_download_headers(filename: str) -> dict[str, str]:
         "Expires": "0",
         "X-Content-Type-Options": "nosniff",
         "X-Download-Options": "noopen",
-        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "Content-Security-Policy": "default-src 'none'; script-src 'none'; script-src-attr 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; sandbox",
     }

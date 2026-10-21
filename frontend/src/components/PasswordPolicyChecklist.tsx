@@ -11,6 +11,7 @@ function passwordPolicyChecks(
 ): PolicyCheck[] {
   const count = (pattern: RegExp) => password.match(pattern)?.length ?? 0;
   const checks: PolicyCheck[] = [
+    { label: "No spaces or whitespace", met: !/\s/.test(password) },
     {
       label: `At least ${policy.min_length} characters`,
       met: password.length >= policy.min_length,

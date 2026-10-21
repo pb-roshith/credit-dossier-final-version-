@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -29,41 +28,32 @@ from app.database import get_db
 from app.local_secrets import rotate_if_due
 from app.secret_provider import is_production
 from app.models.user import AuditLog, AuthSession, SecurityAnswer, User
-from app.schemas.input_validation import StrictInputModel
+from app.schemas.input_validation import CredentialInputModel, UserIdentifier, validate_markdown_text
 from app.responses import Utf8JSONResponse
 
 
 router = APIRouter(prefix="/api/auth", tags=["authentication"])
 logger = logging.getLogger(__name__)
-USER_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
-class Credentials(StrictInputModel):
-    user_id: str = Field(min_length=3, max_length=31)
+class Credentials(CredentialInputModel):
+    user_id: UserIdentifier
     password: str = Field(min_length=1, max_length=31)
 
-    @field_validator("user_id")
-    @classmethod
-    def valid_user_id(cls, value: str) -> str:
-        value = value.strip().lower()
-        if not USER_ID_PATTERN.fullmatch(value):
-            raise ValueError("Use only letters, numbers, periods, hyphens, or underscores.")
-        return value
 
-
-class SecurityQuestionResponse(StrictInputModel):
+class SecurityQuestionResponse(CredentialInputModel):
     question: str = Field(min_length=1, max_length=256)
     answer: str = Field(min_length=2, max_length=256)
 
     @field_validator("question", "answer")
     @classmethod
     def strip_value(cls, value: str) -> str:
-        return value.strip()
+        return validate_markdown_text(value).strip()
 
 
 class RegisterRequest(Credentials):
     confirm_password: str = Field(min_length=1, max_length=31)
-    role: str
+    role: str = Field(max_length=32)
     security_questions: list[SecurityQuestionResponse] = Field(min_length=3, max_length=3)
 
     @field_validator("role")
@@ -74,22 +64,14 @@ class RegisterRequest(Credentials):
         return value
 
 
-class ChangePasswordRequest(StrictInputModel):
+class ChangePasswordRequest(CredentialInputModel):
     current_password: str = Field(min_length=1, max_length=31)
     new_password: str = Field(min_length=1, max_length=31)
     confirm_password: str = Field(min_length=1, max_length=31)
 
 
-class UserIdRequest(StrictInputModel):
-    user_id: str = Field(min_length=3, max_length=31)
-
-    @field_validator("user_id")
-    @classmethod
-    def valid_user_id(cls, value: str) -> str:
-        value = value.strip().lower()
-        if not USER_ID_PATTERN.fullmatch(value):
-            raise ValueError("Use only letters, numbers, periods, hyphens, or underscores.")
-        return value
+class UserIdRequest(CredentialInputModel):
+    user_id: UserIdentifier
 
 
 class ResetPasswordRequest(UserIdRequest):
@@ -98,7 +80,7 @@ class ResetPasswordRequest(UserIdRequest):
     confirm_password: str = Field(min_length=1, max_length=31)
 
 
-class ConfigureSecurityQuestionsRequest(StrictInputModel):
+class ConfigureSecurityQuestionsRequest(CredentialInputModel):
     current_password: str = Field(min_length=1, max_length=31)
     security_questions: list[SecurityQuestionResponse] = Field(min_length=3, max_length=3)
 

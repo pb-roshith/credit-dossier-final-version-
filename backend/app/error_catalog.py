@@ -22,6 +22,8 @@ def _error(code: str, status: int, message: str, description: str) -> ErrorDefin
 
 
 ERROR_CATALOG: dict[str, ErrorDefinition] = {
+    "FILE-003": _error("FILE-003", 400, "Template files cannot exceed 5 MB. Please choose a smaller file.", "Uploaded template exceeds the 5 MB limit."),
+    "FILE-002": _error("FILE-002", 413, "Files cannot exceed 50 MB.", "Uploaded file exceeds the 50 MB limit."),
     "REQ-001": _error("REQ-001", 422, "The request contains invalid data.", "Request schema validation failed."),
     "REQ-002": _error("REQ-002", 400, "The request could not be processed.", "Generic invalid request."),
     "AUTH-001": _error("AUTH-001", 401, "Invalid user ID or password.", "Credential verification failed."),
@@ -67,6 +69,7 @@ ERROR_CATALOG: dict[str, ErrorDefinition] = {
 
 
 _DETAIL_CODES = {
+    "Template file exceeds the 5 MB limit.": "FILE-003",
     "Invalid user ID or password.": "AUTH-001",
     "Your account is in the admin queue for approval.": "AUTH-002",
     "Please sign in to continue.": "AUTH-003",
@@ -100,6 +103,8 @@ def resolve_http_error_code(status_code: int, detail: object) -> str:
     if text in _DETAIL_CODES:
         return _DETAIL_CODES[text]
     lowered = text.casefold()
+    if status_code == 413:
+        return "FILE-002"
     if status_code == 423:
         return "AUTH-009"
     if text.startswith("Invalid user ID or password."):

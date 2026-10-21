@@ -42,33 +42,32 @@ def install_request_security_middleware(app: FastAPI) -> None:
     @app.middleware("http")
     async def enforce_request_security(request: Request, call_next):
         if request.method in {"GET", "HEAD"} and _has_request_data(request):
-            return JSONResponse(
+            response = JSONResponse(
                 status_code=405,
                 content={"detail": "GET and HEAD requests must not contain body or query data; use POST."},
                 headers={"Allow": "POST", "Cache-Control": "no-store"},
             )
-        if request.method not in _SAFE_METHODS and not _same_origin(request):
-            return JSONResponse(
+        elif request.method not in _SAFE_METHODS and not _same_origin(request):
+            response = JSONResponse(
                 status_code=403,
                 content={"detail": "Cross-origin state-changing requests are not allowed."},
                 headers={"Cache-Control": "no-store"},
             )
-        response = await call_next(request)
+        else:
+            response = await call_next(request)
         response.headers.setdefault(
             "Content-Security-Policy",
-            "default-src 'none'; base-uri 'none'; form-action 'none'; "
+            "default-src 'none'; script-src 'none'; script-src-attr 'none'; base-uri 'none'; form-action 'none'; "
             "frame-ancestors 'none'; object-src 'none'",
         )
         response.headers.setdefault("X-Frame-Options", "DENY")
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault(
             "Permissions-Policy",
             "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
         )
-        if settings.APP_ENV.casefold() == "production":
-            response.headers.setdefault(
-                "Strict-Transport-Security",
-                "max-age=31536000; includeSubDomains",
-            )
+        # Also cover HTTPS test deployments and TLS-terminating reverse proxies.
+        # Browsers only honor this header when received over HTTPS.
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response

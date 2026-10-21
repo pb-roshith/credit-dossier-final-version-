@@ -1,3 +1,6 @@
+
+from typing import Annotated
+from fastapi import Path as InputPath
 from fastapi import APIRouter, Depends, HTTPException, Response
 from typing import List, Dict, Any
 
@@ -25,7 +28,7 @@ async def list_companies(response: Response, current_user: User = Depends(get_cu
     return companies
 
 @router.get("/{company_name}/documents", response_model=List[Dict[str, Any]])
-async def get_company_documents(company_name: str, current_user: User = Depends(get_current_user)):
+async def get_company_documents(company_name: Annotated[str, InputPath(min_length=1, max_length=256)], current_user: User = Depends(get_current_user)):
     """Get all documents for a specific company from MCP."""
     # if not MCPClientService.is_connected:
     #     raise HTTPException(status_code=503, detail="MCP server is currently unreachable.")
@@ -40,7 +43,7 @@ async def get_company_documents(company_name: str, current_user: User = Depends(
     return docs
 
 @router.get("/{company_name}/details", response_model=Dict[str, Any])
-async def get_company_details(company_name: str, response: Response, current_user: User = Depends(get_current_user)):
+async def get_company_details(company_name: Annotated[str, InputPath(min_length=1, max_length=256)], response: Response, current_user: User = Depends(get_current_user)):
     """Get details for a specific company from MCP."""
     response.headers["Cache-Control"] = "no-store"
     # if not MCPClientService.is_connected:

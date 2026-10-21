@@ -1,3 +1,10 @@
+export function uploadSizeError(file: Pick<File, "size">, limitMB = 50): string | null {
+  if (file.size <= limitMB * 1024 * 1024) return null;
+  return limitMB === 5
+    ? "Template files cannot exceed 5 MB. Please choose a smaller file."
+    : `Files cannot exceed ${limitMB} MB. Please choose a smaller file.`;
+}
+
 export function textInputError(label: string, value: string, maxLength: number): string | null {
   if (value.length > maxLength) return `${label} cannot exceed ${maxLength} characters.`;
   if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value)) {
